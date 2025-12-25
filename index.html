@@ -5,206 +5,146 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>Block Bonus (Content)</title>
   <style>
-    html,body{height:100%;margin:0;background:#6cc8ff;overflow:hidden;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    html,body{height:100%;margin:0;background:#79d0ff;overflow:hidden}
     #wrap{height:100%;display:flex;align-items:center;justify-content:center;padding:10px}
-    canvas{
-      image-rendering: pixelated;
-      image-rendering: crisp-edges;
-      border-radius:18px;
-      box-shadow:0 30px 90px rgba(0,0,0,.35);
-      outline: 2px solid rgba(0,0,0,.25);
-      background:#6cc8ff;
-    }
+    canvas{image-rendering:pixelated;image-rendering:crisp-edges;border-radius:18px;box-shadow:0 30px 90px rgba(0,0,0,.35);outline:2px solid rgba(0,0,0,.25)}
   </style>
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
 </head>
-<body>
-<div id="wrap"></div>
+<body><div id="wrap"></div>
 
 <script>
 (() => {
-  // =========================
-  // НАСТРОЙКИ ПОД ТВОЁ ВИДЕО
-  // =========================
+  // === ТВОИ ТРЕБОВАНИЯ ===
   const FREE_SPINS = 4;
   const CHESTS_TOTAL = 5;
+  const OPEN_MIN = 3, OPEN_MAX = 5;          // 3..5 сундуков
+  const DECIMALS = 2;                         // итог "327.00" с точкой
+  const BET_MIN = 10, BET_MAX = 5000, BET_STEP = 10; // выбор ставки, валюты НЕТ
 
-  // Открывается 3..5 сундуков
-  const OPEN_MIN = 3;
-  const OPEN_MAX = 5;
+  // === ПИКСЕЛЬНЫЙ ЭКРАН (9:16) ===
+  const W = 360, H = 640;
 
-  // Итог всегда с точкой
-  const DECIMALS = 2; // "327.00"
-
-  // "служебная зона" снизу (чтобы её обрезать при записи)
-  // Всё управление будет только тут.
-  const SAFE_CROP_H = 86;
-
-  // BET выбирается, валюты НЕТ
-  const BET_MIN = 10;
-  const BET_MAX = 5000;
-  const BET_STEP = 10;
-
-  // Внутреннее пиксельное разрешение (9:16)
-  const W = 360;
-  const H = 640;
-
-  // Активная область игры (как на видео) — ВЫШЕ safe-crop зоны
-  const GAME_H = H - SAFE_CROP_H;
-
-  // Layout (подогнано, чтобы выглядело как на ролике)
-  const TOP = { x: 36, y: 36, cols: 5, rows: 3, cw: 56, ch: 38, pad: 4 };
-  const GRID = { x: 40, y: 180, cols: 5, rows: 6, cw: 56, ch: 56 };
+  // Layout “как на видео”
+  const TOP  = { x: 30, y: 28,  cols:5, rows:3, cw:60, ch:40, pad:4 };
+  const GRID = { x: 36, y: 178, cols:5, rows:6, cw:56, ch:56 };
   const CHEST_Y = 520;
-  const SLAB_Y  = 574;  // серый итоговый бар (он в зоне игры, НЕ в safe-crop)
+  const SLAB_Y  = 582;
 
-  // ===== Символы =====
+  // UI (можно скрыть в REC режиме)
+  const UI_Y = 620;
+
+  // Символы (визуально близко, но свои)
   const SYMS = [
-    { k:"P1", hits:1, icon:"⛏", sub:"+1" },
-    { k:"P2", hits:2, icon:"⛏", sub:"+2" },
-    { k:"P3", hits:3, icon:"⛏", sub:"+3" },
-    { k:"ORB",hits:0, icon:"◉", sub:"BONUS" }
+    {k:"P1", hits:1, icon:"⛏", sub:"+1"},
+    {k:"P2", hits:2, icon:"⛏", sub:"+2"},
+    {k:"P3", hits:3, icon:"⛏", sub:"+3"},
+    {k:"ORB",hits:0, icon:"◉", sub:"BONUS"}
   ];
 
-  // ===== Блоки =====
-  const BLOCK_TYPES = [
-    { key:"GRASS", hp:1, base:0x5fcf4a, accent:0x3ea536, pay:0.00 },
-    { key:"DIRT",  hp:1, base:0xb4723a, accent:0x8d5524, pay:0.00 },
-    { key:"STONE", hp:2, base:0x9aa0a8, accent:0x7d838a, pay:0.10 },
-    { key:"RED",   hp:2, base:0xcfd2d6, accent:0xb82e2e, pay:0.20 },
-    { key:"DIAM",  hp:3, base:0x44e1ff, accent:0x2fb9d2, pay:0.80 },
-    { key:"GOLD",  hp:3, base:0xffd34a, accent:0xeab021, pay:0.60 },
-    { key:"OBSI",  hp:4, base:0x2a2438, accent:0x1a1630, pay:2.50 }
-  ];
+  // Блоки “слоями”
+  const TYPES = {
+    GRASS:{hp:1, base:0x67d94f, accent:0x3ea536, pay:0.00},
+    DIRT: {hp:1, base:0xb8743c, accent:0x8d5524, pay:0.00},
+    STONE:{hp:2, base:0xa1a7af, accent:0x7d838a, pay:0.10},
+    RED:  {hp:2, base:0xd7d9dd, accent:0xc13b3b, pay:0.20},
+    DIAM: {hp:3, base:0x4be7ff, accent:0x2fb9d2, pay:0.80},
+    GOLD: {hp:3, base:0xffd652, accent:0xeab021, pay:0.60},
+    OBSI: {hp:4, base:0x2a2438, accent:0x17132b, pay:2.50}
+  };
 
-  // ===== Phaser =====
   new Phaser.Game({
-    type: Phaser.AUTO,
-    parent: "wrap",
-    width: W,
-    height: H,
-    backgroundColor: "#6cc8ff",
-    pixelArt: true,
-    scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
-    scene: { create, update }
+    type: Phaser.AUTO, parent:"wrap", width:W, height:H,
+    backgroundColor:"#79d0ff", pixelArt:true,
+    scale:{mode:Phaser.Scale.FIT, autoCenter:Phaser.Scale.CENTER_BOTH},
+    scene:{create, update}
   });
 
-  // ===== State =====
   let s;
-  let topCells = [];
-  let blocks = [];
-  let chests = [];
-  let overlay;
-  let guide; // линия "можно обрезать" (помогает)
-  let running = false;
-
-  let bet = 100;
-
-  let total = 0;
-  let totalDisp = 0;
-  let spinIndex = 0;
-
-  // UI (в safe-crop зоне)
-  let btnStart, btnMinus, btnPlus, betText;
-
-  // slab
-  let slabText, fsText;
+  let topCells=[], blocks=[], chests=[];
+  let overlay, slabText, fsText;
+  let uiContainer;
+  let running=false, spinIndex=0;
+  let bet=100;
+  let total=0, totalDisp=0;
+  let recMode=false;
 
   function create(){
-    s = this;
-
+    s=this;
     drawSky();
 
-    // Линия подсказки, где обрезать (можешь выключить в коде: guide.setVisible(false))
-    guide = s.add.graphics();
-    guide.lineStyle(2, 0x000000, 0.15);
-    guide.beginPath();
-    guide.moveTo(0, GAME_H);
-    guide.lineTo(W, GAME_H);
-    guide.strokePath();
-    const gtxt = s.add.text(W-6, GAME_H-6, "CROP BELOW", {fontFamily:"monospace",fontSize:"10px",color:"rgba(0,0,0,.35)",fontStyle:"bold"}).setOrigin(1,1);
+    // рамки как на видео
+    frame(18, 20, W-36, 150);
+    frame(24, 168, W-48, 356);
 
-    // Рамки в "игровой зоне"
-    drawFrame(18, 26, W-36, 140);
-    drawFrame(24, 172, W-48, 360);
-
-    // reels + blocks
     buildTop();
     buildBlocks();
-
-    // сундуки (в игровой зоне)
     buildChests();
-
-    // итоговая плашка (в игровой зоне)
     buildSlab();
-
-    // UI в safe-crop зоне (можно обрезать и его не будет видно)
-    buildSafeUI();
-
-    // overlay как в видео
-    overlay = buildOverlay();
+    buildOverlay();
+    buildUI();
 
     randomizeTop(true);
     setTotal(0);
+
+    // Горячие клавиши (ПК)
+    s.input.keyboard.on("keydown-R", ()=>toggleREC());
+    s.input.keyboard.on("keydown-SPACE", ()=> startFlow());
+    s.input.keyboard.on("keydown-ENTER", ()=> startFlow());
+
+    // “тройной тап” в правом верхнем углу (телефон)
+    setupTripleTapREC();
   }
 
   function update(){
-    totalDisp += (total - totalDisp) * 0.18;
-    if (Math.abs(total-totalDisp) < 0.005) totalDisp = total;
+    totalDisp += (total-totalDisp)*0.18;
+    if(Math.abs(total-totalDisp)<0.005) totalDisp=total;
     slabText.setText(fmt(totalDisp));
   }
 
-  // =========================
-  // FLOW: START -> overlay -> 4 spins -> open 3..5 chests -> finish
-  // =========================
-  async function startBonus(){
+  // ===== Flow 1-в-1 по этапам =====
+  async function startFlow(){
     if(running) return;
-    running = true;
+    running=true;
 
     lockUI(true);
 
-    spinIndex = 0;
+    spinIndex=0;
     setTotal(0);
     resetChests();
-    resetBlocksPersistent();
+    resetBlocks();
 
-    // overlay
     overlay.show();
     await wait(900);
     overlay.hide();
     await wait(250);
 
-    // 4 spins
     for(let i=0;i<FREE_SPINS;i++){
-      spinIndex = i+1;
+      spinIndex=i+1;
       fsText.setText(`FREE SPIN ${spinIndex}/${FREE_SPINS}`);
-      await doOneSpin();
+      await oneSpin();
       await wait(240);
     }
     fsText.setText("");
 
-    // сундуки 3..5
-    await doChestsPhase();
+    await chestPhase();
 
-    // конец
-    running = false;
+    running=false;
     lockUI(false);
   }
 
-  async function doOneSpin(){
+  async function oneSpin(){
     await reelSpin();
-    const hits = [0,0,0,0,0];
 
-    topCells.forEach(cell => { hits[cell.c] += cell.sym.hits; });
-
-    // делаем, чтобы в бонусе всегда было “движение” как на видео
-    for(let i=0;i<5;i++) hits[i] += rndi(1,4);
+    const hits=[0,0,0,0,0];
+    topCells.forEach(c=> hits[c.c] += c.sym.hits);
+    for(let i=0;i<5;i++) hits[i]+=rndi(1,4); // ощущение “живее” как в видео
 
     for(let col=0; col<5; col++){
-      let left = hits[col];
+      let left=hits[col];
       for(let row=0; row<6; row++){
         if(left<=0) break;
-        const b = blocks.find(z => z.c===col && z.r===row);
+        const b = blocks.find(z=>z.c===col && z.r===row);
         if(!b || !b.alive) continue;
         await hitBlock(b);
         left--;
@@ -213,390 +153,288 @@
     refreshHp();
   }
 
-  async function doChestsPhase(){
+  async function chestPhase(){
     await wait(260);
 
-    // Сколько сундуков откроем (3..5)
     const openCount = rndi(OPEN_MIN, OPEN_MAX+1);
 
-    // Чем меньше сундуков, тем выше мульты (как ты просил)
-    // openCount=3 => больше вероятность 10..50
-    // openCount=5 => чаще 2..10
-    const pool = (openCount === 3)
-      ? { values:[5,10,12,15,20,25,30,40,50], weights:[6,14,14,14,14,12,10,8,8] }
-      : (openCount === 4)
-      ? { values:[2,3,5,8,10,12,15,20,25], weights:[18,16,16,14,12,10,8,4,2] }
-      : { values:[2,2,3,3,5,5,8,10,12], weights:[22,20,16,14,12,8,5,2,1] };
+    // меньше сундуков = выше мульты
+    const pool = (openCount===3)
+      ? {v:[5,10,12,15,20,25,30,40,50], w:[6,14,14,14,14,12,10,8,8]}
+      : (openCount===4)
+      ? {v:[2,3,5,8,10,12,15,20,25], w:[18,16,16,14,12,10,8,4,2]}
+      : {v:[2,2,3,3,5,5,8,10,12], w:[22,20,16,14,12,8,5,2,1]};
 
-    // Выбираем какие сундуки откроются (слева направо для “как в ролике”)
-    // Можно сделать случайные — но видео обычно слева направо.
-    const openIdx = [];
-    for(let i=0;i<openCount;i++) openIdx.push(i);
+    let cur=total;
+    for(let i=0;i<openCount;i++){
+      const c=chests[i];
+      openChest(c);
 
-    // Применение: множители “накручивают” текущий total
-    let current = total;
+      const mul = pickW(pool.v, pool.w);
+      showMul(c, mul);
 
-    for(let k=0;k<openIdx.length;k++){
-      const i = openIdx[k];
-      const c = chests[i];
-      c.opened = true;
-      c.lock.setAlpha(0);
-      drawChest(c.g, c.x,c.y,c.w,c.h,true);
-
-      const mul = pickWeighted(pool.values, pool.weights);
-
-      // надпись xN
-      const txt = s.add.text(c.x+c.w/2, c.y-10, `x${mul}`, {
-        fontFamily:"monospace",
-        fontSize:"16px",
-        color:"#0b0b0b",
-        fontStyle:"bold",
-        backgroundColor:"rgba(255,255,255,.65)",
-        padding:{left:6,right:6,top:2,bottom:2}
-      }).setOrigin(0.5);
-
-      s.tweens.add({targets:txt, y:txt.y-10, duration:180, yoyo:true});
-      pixelBurst(c.x+c.w/2, c.y+8, 0xffd34a);
-
-      // множитель применяем к total
-      current = current * mul;
-      setTotal(current);
+      cur = cur * mul;
+      setTotal(cur);
 
       await wait(420);
-      s.tweens.add({targets:txt, alpha:0, duration:520, delay:360, onComplete:()=>txt.destroy()});
     }
 
-    // Если открылось меньше 5 сундуков — остальные остаются закрытыми (как просишь)
-    // Финальный "nice"
-    setTotal(makeNice(current));
+    setTotal(makeNice(cur));
     await wait(450);
   }
 
-  // =========================
-  // UI / SAFE CROP ZONE
-  // =========================
-  function buildSafeUI(){
-    const baseY = GAME_H + 14; // вся панель ниже линии crop
+  // ===== UI/REC =====
+  function buildUI(){
+    uiContainer = s.add.container(0,0).setDepth(50);
 
-    // фон панели
-    const g = s.add.graphics();
-    g.fillStyle(0x000000, 0.18);
-    g.fillRect(0, GAME_H, W, SAFE_CROP_H);
-
-    // BET - + (маленькие)
-    btnMinus = makeBtn(W/2 - 120, baseY+18, 34, 26, "-", () => setBet(bet - BET_STEP));
-    btnPlus  = makeBtn(W/2 + 120, baseY+18, 34, 26, "+", () => setBet(bet + BET_STEP));
+    const y = UI_Y;
 
     const bg = s.add.graphics();
-    bg.fillStyle(0xffffff, 0.55);
-    bg.fillRect(W/2-70, baseY+5, 140, 26);
-    bg.lineStyle(2, 0x000000, 0.18);
-    bg.strokeRect(W/2-70, baseY+5, 140, 26);
+    bg.fillStyle(0x000000,0.18);
+    bg.fillRect(0, H-40, W, 40);
 
-    betText = s.add.text(W/2, baseY+18, `BET: ${bet}`, {
-      fontFamily:"monospace", fontSize:"12px", color:"#0b0b0b", fontStyle:"bold"
-    }).setOrigin(0.5);
+    const minus = btn(W/2-120,y,34,24,"-",()=>setBet(bet-BET_STEP));
+    const plus  = btn(W/2+120,y,34,24,"+",()=>setBet(bet+BET_STEP));
 
-    // START
-    btnStart = makeBtn(W/2, baseY+52, 170, 30, "СТАРТ", () => startBonus());
+    const panel = s.add.graphics();
+    panel.fillStyle(0xffffff,0.60);
+    panel.fillRect(W/2-70, y-12, 140, 24);
+    panel.lineStyle(2,0x000000,0.18);
+    panel.strokeRect(W/2-70, y-12, 140, 24);
+
+    const betT = s.add.text(W/2,y,`BET: ${bet}`,{fontFamily:"monospace",fontSize:"12px",color:"#0b0b0b",fontStyle:"bold"}).setOrigin(.5);
+    const start = btn(W/2,y+18,170,26,"START",()=>startFlow());
+
+    const recHint = s.add.text(W-6, H-6, "R = REC", {fontFamily:"monospace",fontSize:"10px",color:"rgba(255,255,255,.55)",fontStyle:"bold"}).setOrigin(1,1);
+
+    uiContainer.add([bg, minus, plus, panel, betT, start, recHint]);
+
+    uiContainer.betText = betT;
+    uiContainer.minus = minus;
+    uiContainer.plus = plus;
+    uiContainer.start = start;
   }
 
   function lockUI(lock){
+    if(!uiContainer) return;
     if(lock){
-      btnStart.disableInteractive();
-      btnMinus.disableInteractive();
-      btnPlus.disableInteractive();
-    } else {
-      btnStart.setInteractive();
-      btnMinus.setInteractive();
-      btnPlus.setInteractive();
+      uiContainer.start.disableInteractive();
+      uiContainer.minus.disableInteractive();
+      uiContainer.plus.disableInteractive();
+    }else{
+      uiContainer.start.setInteractive();
+      uiContainer.minus.setInteractive();
+      uiContainer.plus.setInteractive();
     }
+  }
+
+  function toggleREC(){
+    recMode = !recMode;
+    if(uiContainer) uiContainer.setVisible(!recMode);
+  }
+
+  function setupTripleTapREC(){
+    let taps=0, last=0;
+    s.input.on("pointerdown", (p)=>{
+      // зона 60x60 в правом верхнем углу
+      if(p.x < W-60 || p.y > 60) return;
+      const now = s.time.now;
+      if(now-last > 450){ taps=0; }
+      taps++; last=now;
+      if(taps>=3){ taps=0; toggleREC(); }
+    });
   }
 
   function setBet(v){
     if(running) return;
     bet = clamp(v, BET_MIN, BET_MAX);
-    bet = Math.round(bet / BET_STEP) * BET_STEP;
-    betText.setText(`BET: ${bet}`);
+    bet = Math.round(bet/BET_STEP)*BET_STEP;
+    uiContainer.betText.setText(`BET: ${bet}`);
   }
 
-  // =========================
-  // SLAB (итог) + FREE SPIN LABEL
-  // =========================
+  // ===== Slab (итог как в видео) =====
   function buildSlab(){
-    const g = s.add.graphics();
-    g.fillStyle(0xbdbdbd, 1);
-    g.fillRect(24, SLAB_Y, W-48, 30);
-    g.lineStyle(2, 0x6b6b6b, 1);
-    g.strokeRect(24, SLAB_Y, W-48, 30);
+    const g=s.add.graphics();
+    g.fillStyle(0xbdbdbd,1);
+    g.fillRect(24,SLAB_Y,W-48,30);
+    g.lineStyle(2,0x6b6b6b,1);
+    g.strokeRect(24,SLAB_Y,W-48,30);
 
-    slabText = s.add.text(W/2, SLAB_Y+7, "0.00", {
-      fontFamily:"monospace", fontSize:"16px", color:"#0b0b0b", fontStyle:"bold"
-    }).setOrigin(0.5,0);
-
-    fsText = s.add.text(28, SLAB_Y-8, "", {
-      fontFamily:"monospace", fontSize:"12px", color:"rgba(0,0,0,.55)", fontStyle:"bold"
-    }).setOrigin(0,1);
+    slabText=s.add.text(W/2,SLAB_Y+7,"0.00",{fontFamily:"monospace",fontSize:"16px",color:"#0b0b0b",fontStyle:"bold"}).setOrigin(.5,0);
+    fsText=s.add.text(28,SLAB_Y-8,"",{fontFamily:"monospace",fontSize:"12px",color:"rgba(0,0,0,.55)",fontStyle:"bold"}).setOrigin(0,1);
   }
 
-  function setTotal(v){
-    total = Math.max(0, v);
-  }
+  function setTotal(v){ total=Math.max(0,v); }
 
-  // =========================
-  // OVERLAY (BLOCK BONUS 4 FREE SPINS)
-  // =========================
+  // ===== Overlay =====
   function buildOverlay(){
-    const c = s.add.container(0,0).setDepth(999).setVisible(false);
-    const dim = s.add.rectangle(W/2, GAME_H/2, W, GAME_H, 0x000000, 0.65);
+    const c=s.add.container(0,0).setDepth(200).setVisible(false);
+    const dim=s.add.rectangle(W/2,(SLAB_Y-10)/2,W,SLAB_Y-10,0x000000,0.65);
 
-    const title = s.add.text(W/2, GAME_H/2 - 30, "BLOCK BONUS", {
-      fontFamily:"monospace", fontSize:"22px", color:"#ffffff", fontStyle:"bold"
-    }).setOrigin(0.5);
+    const t1=s.add.text(W/2,(SLAB_Y-10)/2-30,"BLOCK BONUS",{fontFamily:"monospace",fontSize:"22px",color:"#fff",fontStyle:"bold"}).setOrigin(.5);
+    const t2=s.add.text(W/2,(SLAB_Y-10)/2,`${FREE_SPINS} FREE SPINS`,{fontFamily:"monospace",fontSize:"26px",color:"#fff",fontStyle:"bold"}).setOrigin(.5);
+    const t3=s.add.text(W/2,(SLAB_Y-10)/2+32,"Blocks are persistent for 4 spins.",{fontFamily:"monospace",fontSize:"12px",color:"rgba(255,255,255,.75)",fontStyle:"bold"}).setOrigin(.5);
 
-    const big = s.add.text(W/2, GAME_H/2, `${FREE_SPINS} FREE SPINS`, {
-      fontFamily:"monospace", fontSize:"26px", color:"#ffffff", fontStyle:"bold"
-    }).setOrigin(0.5);
-
-    const sub = s.add.text(W/2, GAME_H/2 + 32, "Blocks are persistent for 4 spins.", {
-      fontFamily:"monospace", fontSize:"12px", color:"rgba(255,255,255,.75)", fontStyle:"bold"
-    }).setOrigin(0.5);
-
-    c.add([dim, title, big, sub]);
-
-    c.show = () => { c.setVisible(true); c.setAlpha(0); s.tweens.add({targets:c, alpha:1, duration:180}); };
-    c.hide = () => { s.tweens.add({targets:c, alpha:0, duration:180, onComplete:()=>c.setVisible(false)}); };
-    return c;
+    c.add([dim,t1,t2,t3]);
+    c.show=()=>{c.setVisible(true);c.setAlpha(0);s.tweens.add({targets:c,alpha:1,duration:180});};
+    c.hide=()=>{s.tweens.add({targets:c,alpha:0,duration:180,onComplete:()=>c.setVisible(false)});};
+    overlay=c;
   }
 
-  // =========================
-  // TOP (5x3)
-  // =========================
+  // ===== Top 5x3 =====
   function buildTop(){
-    topCells = [];
+    topCells=[];
     for(let r=0;r<TOP.rows;r++){
       for(let c=0;c<TOP.cols;c++){
-        const x = TOP.x + c*(TOP.cw+TOP.pad);
-        const y = TOP.y + r*(TOP.ch+TOP.pad);
-        topCells.push(makeTopCell(x,y,TOP.cw,TOP.ch,r,c));
+        const x=TOP.x+c*(TOP.cw+TOP.pad);
+        const y=TOP.y+r*(TOP.ch+TOP.pad);
+        topCells.push(topCell(x,y,TOP.cw,TOP.ch,r,c));
       }
     }
   }
+  function topCell(x,y,w,h,r,c){
+    const g=s.add.graphics();
+    g.fillStyle(0xbfc5cc,1); g.fillRect(x,y,w,h);
+    g.lineStyle(2,0x53575e,1); g.strokeRect(x,y,w,h);
 
-  function makeTopCell(x,y,w,h,r,c){
-    const g = s.add.graphics();
-    g.fillStyle(0xbfc5cc, 1);
-    g.fillRect(x,y,w,h);
-    g.lineStyle(2, 0x53575e, 1);
-    g.strokeRect(x,y,w,h);
-
-    const icon = s.add.text(x+w/2, y+h/2-2, "", {
-      fontFamily:"monospace", fontSize:"18px", color:"#1a1a1a", fontStyle:"bold"
-    }).setOrigin(0.5);
-
-    const sub = s.add.text(x+w/2, y+h-10, "", {
-      fontFamily:"monospace", fontSize:"10px", color:"#2d2d2d", fontStyle:"bold"
-    }).setOrigin(0.5);
-
+    const icon=s.add.text(x+w/2,y+h/2-2,"",{fontFamily:"monospace",fontSize:"18px",color:"#1a1a1a",fontStyle:"bold"}).setOrigin(.5);
+    const sub =s.add.text(x+w/2,y+h-10,"",{fontFamily:"monospace",fontSize:"10px",color:"#2d2d2d",fontStyle:"bold"}).setOrigin(.5);
     return {x,y,w,h,r,c,g,icon,sub,sym:SYMS[0]};
   }
-
   function randomizeTop(forceOrb){
     topCells.forEach(cell=>{
       let sym;
-      if(forceOrb && cell.r===0 && cell.c===2){
-        sym = SYMS.find(z=>z.k==="ORB");
-      } else {
-        sym = pickWeighted([SYMS[0],SYMS[1],SYMS[2],SYMS[3]], [20,30,30,20]);
-      }
-      setTop(cell, sym);
+      if(forceOrb && cell.r===0 && cell.c===2) sym=SYMS.find(z=>z.k==="ORB");
+      else sym=pickW([SYMS[0],SYMS[1],SYMS[2],SYMS[3]],[20,30,30,20]);
+      setTop(cell,sym);
     });
   }
-
-  function setTop(cell, sym){
-    cell.sym = sym;
+  function setTop(cell,sym){
+    cell.sym=sym;
     cell.icon.setText(sym.icon);
     cell.sub.setText(sym.sub);
-
     if(sym.k==="ORB"){
-      cell.icon.setColor("#0b5cff");
-      cell.sub.setColor("#0b5cff");
-      pulseGlow(cell.x+cell.w/2, cell.y+cell.h/2, 16);
-    } else {
-      cell.icon.setColor("#1a1a1a");
-      cell.sub.setColor("#2d2d2d");
+      cell.icon.setColor("#0b5cff"); cell.sub.setColor("#0b5cff");
+      glow(cell.x+cell.w/2, cell.y+cell.h/2, 16);
+    }else{
+      cell.icon.setColor("#1a1a1a"); cell.sub.setColor("#2d2d2d");
     }
   }
-
   function reelSpin(){
-    return new Promise(resolve=>{
-      const t0 = s.time.now;
-      const dur = 650;
-      const ev = s.time.addEvent({
-        delay: 55, loop:true,
-        callback: ()=>{
-          randomizeTop(false);
-          topCells.forEach(c=> c.icon.y = (c.y + c.h/2 - 2) + rndi(-1,2));
-          if(s.time.now - t0 >= dur){
-            ev.remove(false);
-            randomizeTop(true);
-            topCells.forEach(c=> c.icon.y = (c.y + c.h/2 - 2));
-            resolve();
-          }
+    return new Promise(res=>{
+      const t0=s.time.now, dur=650;
+      const ev=s.time.addEvent({delay:55,loop:true,callback:()=>{
+        randomizeTop(false);
+        topCells.forEach(c=>c.icon.y=(c.y+c.h/2-2)+rndi(-1,2));
+        if(s.time.now-t0>=dur){
+          ev.remove(false);
+          randomizeTop(true);
+          topCells.forEach(c=>c.icon.y=(c.y+c.h/2-2));
+          res();
         }
-      });
+      }});
     });
   }
 
-  // =========================
-  // BLOCKS (5x6) persistent
-  // =========================
+  // ===== Blocks 5x6 persistent =====
   function buildBlocks(){
-    blocks = [];
+    blocks=[];
     for(let r=0;r<GRID.rows;r++){
       for(let c=0;c<GRID.cols;c++){
-        const x = GRID.x + c*GRID.cw;
-        const y = GRID.y + r*GRID.ch;
-        const type = layerType(r,c);
-        blocks.push(makeBlock(x,y,GRID.cw,GRID.ch,r,c,type));
+        const x=GRID.x+c*GRID.cw, y=GRID.y+r*GRID.ch;
+        const t=layer(r,c);
+        blocks.push(block(x,y,GRID.cw,GRID.ch,r,c,t));
       }
     }
     refreshHp();
   }
-
-  function resetBlocksPersistent(){
+  function resetBlocks(){
     blocks.forEach(b=>{
       b.alive=true;
-      b.type = layerType(b.r,b.c);
-      b.hp = b.type.hp;
+      b.type=layer(b.r,b.c);
+      b.hp=b.type.hp;
       b.g.clear();
-      drawBlock(b.g, b.x,b.y,b.w,b.h,b.type);
+      drawBlock(b.g,b.x,b.y,b.w,b.h,b.type);
       b.hpText.setAlpha(1);
     });
     refreshHp();
   }
-
-  function layerType(r,c){
-    if(r===0) return findType("GRASS");
-    if(r===1) return findType("DIRT");
-    if(r===2) return findType("STONE");
-    if(r===3) return findType("RED");
-    if(r===4) return (c<2 ? findType("DIAM") : findType("GOLD"));
-    if(r===5) return (c===4 ? findType("OBSI") : pickWeighted(
-      [findType("DIAM"), findType("GOLD"), findType("STONE")],
-      [28, 45, 27]
-    ));
-    return findType("STONE");
+  function layer(r,c){
+    if(r===0) return TYPES.GRASS;
+    if(r===1) return TYPES.DIRT;
+    if(r===2) return TYPES.STONE;
+    if(r===3) return TYPES.RED;
+    if(r===4) return (c<2?TYPES.DIAM:TYPES.GOLD);
+    if(r===5) return (c===4?TYPES.OBSI: pickW([TYPES.DIAM,TYPES.GOLD,TYPES.STONE],[28,45,27]));
+    return TYPES.STONE;
   }
-
-  function findType(k){ return BLOCK_TYPES.find(t=>t.key===k); }
-
-  function makeBlock(x,y,w,h,r,c,type){
-    const g = s.add.graphics();
-    drawBlock(g,x,y,w,h,type);
-    const hpText = s.add.text(x+4,y+4,"",{fontFamily:"monospace",fontSize:"10px",color:"rgba(0,0,0,.65)",fontStyle:"bold"});
+  function block(x,y,w,h,r,c,type){
+    const g=s.add.graphics(); drawBlock(g,x,y,w,h,type);
+    const hpText=s.add.text(x+4,y+4,"",{fontFamily:"monospace",fontSize:"10px",color:"rgba(0,0,0,.65)",fontStyle:"bold"});
     return {x,y,w,h,r,c,type,hp:type.hp,alive:true,g,hpText};
   }
-
-  function drawBlock(g,x,y,w,h,type){
-    g.fillStyle(type.base,1);
-    g.fillRect(x,y,w,h);
-    for(let i=0;i<10;i++){
-      g.fillStyle(type.accent,0.9);
-      g.fillRect(x+rndi(2,w-6), y+rndi(2,h-6), 2, 2);
-    }
-    g.lineStyle(2, 0x000000, 0.22);
-    g.strokeRect(x,y,w,h);
-    g.fillStyle(0xffffff, 0.10);
-    g.fillRect(x+2,y+2,w-4,6);
-    if(type.key==="GRASS"){
-      g.fillStyle(0x56c83f,1);
-      g.fillRect(x,y,w,10);
-    }
-    if(type.key==="RED"){
-      g.fillStyle(0xb82e2e,1);
-      g.fillRect(x,y+h-10,w,10);
-    }
+  function drawBlock(g,x,y,w,h,t){
+    g.fillStyle(t.base,1); g.fillRect(x,y,w,h);
+    for(let i=0;i<10;i++){ g.fillStyle(t.accent,0.9); g.fillRect(x+rndi(2,w-6),y+rndi(2,h-6),2,2); }
+    g.lineStyle(2,0x000000,0.22); g.strokeRect(x,y,w,h);
+    g.fillStyle(0xffffff,0.10); g.fillRect(x+2,y+2,w-4,6);
+    if(t===TYPES.GRASS){ g.fillStyle(0x56c83f,1); g.fillRect(x,y,w,10); }
+    if(t===TYPES.RED){ g.fillStyle(0xc13b3b,1); g.fillRect(x,y+h-10,w,10); }
   }
-
-  function refreshHp(){
-    blocks.forEach(b => b.hpText.setText(b.alive ? `HP:${b.hp}` : ""));
-  }
+  function refreshHp(){ blocks.forEach(b=>b.hpText.setText(b.alive?`HP:${b.hp}`:"")); }
 
   function hitBlock(b){
     return new Promise(resolve=>{
       b.hp -= 1;
-      pixelBurst(b.x+b.w/2, b.y+b.h/2, b.type.accent);
+      burst(b.x+b.w/2,b.y+b.h/2,b.type.accent);
 
-      const crack = s.add.graphics();
-      crack.lineStyle(2, 0x000000, 0.22);
+      const crack=s.add.graphics();
+      crack.lineStyle(2,0x000000,0.22);
       crack.beginPath();
-      crack.moveTo(b.x + rndi(6,b.w-6), b.y + rndi(6,b.h-6));
-      crack.lineTo(b.x + rndi(6,b.w-6), b.y + rndi(6,b.h-6));
+      crack.moveTo(b.x+rndi(6,b.w-6), b.y+rndi(6,b.h-6));
+      crack.lineTo(b.x+rndi(6,b.w-6), b.y+rndi(6,b.h-6));
       crack.strokePath();
-      s.time.delayedCall(120, ()=> crack.destroy());
+      s.time.delayedCall(120,()=>crack.destroy());
 
       if(b.hp<=0){
         b.alive=false;
-
-        // pay: добавка как в видео (накапливаем к итогу)
-        const add = bet * b.type.pay;
-        setTotal(total + add);
+        setTotal(total + bet*b.type.pay);
 
         s.time.delayedCall(80, ()=>{
           b.g.clear();
-          b.g.fillStyle(0x000000, 0.06);
-          b.g.fillRect(b.x,b.y,b.w,b.h);
-          b.g.lineStyle(1, 0x000000, 0.12);
-          b.g.strokeRect(b.x,b.y,b.w,b.h);
+          b.g.fillStyle(0x000000,0.06); b.g.fillRect(b.x,b.y,b.w,b.h);
+          b.g.lineStyle(1,0x000000,0.12); b.g.strokeRect(b.x,b.y,b.w,b.h);
         });
-        s.tweens.add({targets:b.hpText, alpha:0, duration:140});
-      } else {
+        s.tweens.add({targets:b.hpText,alpha:0,duration:140});
+      }else{
         b.hpText.setText(`HP:${b.hp}`);
       }
       s.time.delayedCall(130, resolve);
     });
   }
 
-  // =========================
-  // CHESTS (5 total, open 3..5)
-  // =========================
+  // ===== Chests =====
   function buildChests(){
-    chests = [];
-    const startX = 28;
-    const cw = 60;
+    chests=[];
+    const startX=28, cw=60;
     for(let i=0;i<CHESTS_TOTAL;i++){
-      const x = startX + i*(cw+6);
-      const y = CHEST_Y;
-      chests.push(makeChest(x,y,cw,38,i));
+      const x=startX+i*(cw+6), y=CHEST_Y;
+      chests.push(chest(x,y,cw,38,i));
     }
   }
-
-  function makeChest(x,y,w,h,i){
-    const g = s.add.graphics();
-    drawChest(g,x,y,w,h,false);
-    const lock = s.add.text(x+w/2, y+h/2+1, "🔒", {fontFamily:"monospace", fontSize:"12px"}).setOrigin(0.5);
+  function chest(x,y,w,h,i){
+    const g=s.add.graphics(); drawChest(g,x,y,w,h,false);
+    const lock=s.add.text(x+w/2,y+h/2+1,"🔒",{fontFamily:"monospace",fontSize:"12px"}).setOrigin(.5);
     return {x,y,w,h,i,g,lock,opened:false};
   }
-
   function drawChest(g,x,y,w,h,opened){
     g.clear();
-    g.fillStyle(0xc9903a,1);
-    g.fillRect(x,y,w,h);
-    g.fillStyle(0xa86e2c,1);
-    g.fillRect(x,y,w,12);
-    for(let k=0;k<4;k++){
-      g.fillStyle(0x000000,0.10);
-      g.fillRect(x+6+k*14, y, 2, h);
-    }
-    g.lineStyle(2,0x000000,0.22);
-    g.strokeRect(x,y,w,h);
-    if(opened){
-      g.fillStyle(0x000000,0.18);
-      g.fillRect(x, y-10, w, 10);
-    }
+    g.fillStyle(0xc9903a,1); g.fillRect(x,y,w,h);
+    g.fillStyle(0xa86e2c,1); g.fillRect(x,y,w,12);
+    for(let k=0;k<4;k++){ g.fillStyle(0x000000,0.10); g.fillRect(x+6+k*14,y,2,h); }
+    g.lineStyle(2,0x000000,0.22); g.strokeRect(x,y,w,h);
+    if(opened){ g.fillStyle(0x000000,0.18); g.fillRect(x,y-10,w,10); }
   }
-
   function resetChests(){
     chests.forEach(c=>{
       c.opened=false;
@@ -604,124 +442,98 @@
       c.lock.setText("🔒").setAlpha(1);
     });
   }
+  function openChest(c){
+    c.opened=true;
+    c.lock.setAlpha(0);
+    drawChest(c.g,c.x,c.y,c.w,c.h,true);
+    burst(c.x+c.w/2, c.y+8, 0xffd652);
+  }
+  function showMul(c,mul){
+    const txt=s.add.text(c.x+c.w/2,c.y-10,`x${mul}`,{
+      fontFamily:"monospace",fontSize:"16px",color:"#0b0b0b",fontStyle:"bold",
+      backgroundColor:"rgba(255,255,255,.65)",padding:{left:6,right:6,top:2,bottom:2}
+    }).setOrigin(.5);
+    s.tweens.add({targets:txt,y:txt.y-10,duration:180,yoyo:true});
+    s.tweens.add({targets:txt,alpha:0,duration:520,delay:780,onComplete:()=>txt.destroy()});
+  }
 
-  // =========================
-  // EFFECTS / DRAW
-  // =========================
+  // ===== Background/FX =====
   function drawSky(){
-    const bg = s.add.graphics();
-    bg.fillStyle(0x6cc8ff,1);
-    bg.fillRect(0,0,W,H);
+    const bg=s.add.graphics();
+    bg.fillStyle(0x79d0ff,1); bg.fillRect(0,0,W,H);
+    for(let i=0;i<8;i++) cloud(rndi(10,W-70), rndi(10,150), rndi(20,34));
 
-    for(let i=0;i<8;i++){
-      drawCloud(rndi(10,W-70), rndi(10,150), rndi(20,34));
-    }
-
-    const g = s.add.graphics();
-    g.fillStyle(0x56c83f,1);
-    g.fillRect(0, GAME_H-18, W, 8);
-    g.fillStyle(0xb4723a,1);
-    g.fillRect(0, GAME_H-10, W, 10);
-    g.fillStyle(0x000000,0.12);
-    g.fillRect(0, GAME_H-18, W, 18);
+    // земля под сеткой (как в видео)
+    const g=s.add.graphics();
+    g.fillStyle(0x56c83f,1); g.fillRect(0, H-120, W, 10);
+    g.fillStyle(0xb8743c,1); g.fillRect(0, H-110, W, 110);
+    g.fillStyle(0x000000,0.10); g.fillRect(0, H-120, W, 120);
   }
-
-  function drawCloud(x,y,size){
-    const g = s.add.graphics();
-    g.fillStyle(0xffffff, 1);
-    g.fillRect(x, y, size, size/2);
-    g.fillRect(x+8, y-6, size, size/2);
-    g.fillRect(x+16, y+2, size, size/2);
-    g.fillStyle(0x000000, 0.08);
-    g.fillRect(x, y+size/2-2, size+16, 3);
+  function cloud(x,y,size){
+    const g=s.add.graphics();
+    g.fillStyle(0xffffff,1);
+    g.fillRect(x,y,size,size/2);
+    g.fillRect(x+8,y-6,size,size/2);
+    g.fillRect(x+16,y+2,size,size/2);
+    g.fillStyle(0x000000,0.08);
+    g.fillRect(x,y+size/2-2,size+16,3);
   }
-
-  function drawFrame(x,y,w,h){
-    const g = s.add.graphics();
-    g.fillStyle(0xd6d6d6,1);
-    g.fillRect(x,y,w,h);
-    g.lineStyle(3, 0x6b6b6b, 1);
-    g.strokeRect(x,y,w,h);
-    g.lineStyle(1, 0xffffff, 0.35);
-    g.strokeRect(x+2,y+2,w-4,h-4);
+  function frame(x,y,w,h){
+    const g=s.add.graphics();
+    g.fillStyle(0xd6d6d6,1); g.fillRect(x,y,w,h);
+    g.lineStyle(3,0x6b6b6b,1); g.strokeRect(x,y,w,h);
+    g.lineStyle(1,0xffffff,0.35); g.strokeRect(x+2,y+2,w-4,h-4);
   }
-
-  function makeBtn(x,y,w,h,text,onClick){
-    const c = s.add.container(x,y);
-    const g = s.add.graphics();
-    const draw = (pressed=false)=>{
-      g.clear();
-      g.fillStyle(0xb7b7b7, 1);
-      g.fillRect(-w/2, -h/2, w, h);
-      g.fillStyle(0x8f8f8f, 1);
-      g.fillRect(-w/2, -h/2, w, 6);
-      g.fillStyle(0xd7d7d7, 1);
-      g.fillRect(-w/2, h/2-6, w, 6);
-      g.lineStyle(2, 0x3a3a3a, 1);
-      g.strokeRect(-w/2, -h/2, w, h);
-      if(pressed){
-        g.fillStyle(0x000000, 0.10);
-        g.fillRect(-w/2, -h/2, w, h);
-      }
-    };
-    draw(false);
-    const t = s.add.text(0,0,text,{fontFamily:"monospace",fontSize:"14px",color:"#101010",fontStyle:"bold"}).setOrigin(0.5);
-    c.add([g,t]);
-    c.setSize(w,h);
-    c.setInteractive(new Phaser.Geom.Rectangle(-w/2,-h/2,w,h), Phaser.Geom.Rectangle.Contains);
-    c.on("pointerdown", ()=>{ draw(true); s.time.delayedCall(90, ()=>draw(false)); onClick(); });
-    return c;
-  }
-
-  function pixelBurst(x,y,color){
+  function burst(x,y,color){
     for(let i=0;i<10;i++){
-      const p = s.add.rectangle(x,y,2,2,color,1);
-      const dx = rnd(-30,30);
-      const dy = rnd(-30,30);
-      s.tweens.add({
-        targets:p, x:x+dx, y:y+dy,
-        alpha:{from:1,to:0},
-        duration:260,
-        onComplete:()=>p.destroy()
-      });
+      const p=s.add.rectangle(x,y,2,2,color,1);
+      s.tweens.add({targets:p, x:x+rnd(-30,30), y:y+rnd(-30,30), alpha:{from:1,to:0}, duration:260, onComplete:()=>p.destroy()});
     }
   }
-
-  function pulseGlow(x,y,r){
-    const g = s.add.graphics();
-    g.fillStyle(0x2aa8ff, 0.35);
-    g.fillCircle(x,y,r);
-    s.tweens.add({targets:g, alpha:{from:0.45,to:0.1}, duration:500, yoyo:true, repeat:2, onComplete:()=>g.destroy()});
+  function glow(x,y,r){
+    const g=s.add.graphics();
+    g.fillStyle(0x2aa8ff,0.35); g.fillCircle(x,y,r);
+    s.tweens.add({targets:g,alpha:{from:0.45,to:0.1},duration:500,yoyo:true,repeat:2,onComplete:()=>g.destroy()});
   }
 
-  // =========================
-  // UTILS
-  // =========================
+  // ===== Utils =====
   function wait(ms){ return new Promise(r=>s.time.delayedCall(ms,r)); }
   function rnd(a,b){ return a + Math.random()*(b-a); }
   function rndi(a,b){ return Math.floor(rnd(a,b)); }
   function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
-
-  function pickWeighted(values, weights){
+  function pickW(values, weights){
     const sum = weights.reduce((a,b)=>a+b,0);
     let r = Math.random()*sum;
-    for(let i=0;i<values.length;i++){
-      r -= weights[i];
-      if(r<=0) return values[i];
-    }
+    for(let i=0;i<values.length;i++){ r-=weights[i]; if(r<=0) return values[i]; }
     return values[values.length-1];
   }
-
-  function fmt(v){
-    const x = Math.max(0, v);
-    return x.toFixed(DECIMALS); // точка всегда
+  function fmt(v){ return Math.max(0,v).toFixed(DECIMALS); }
+  function makeNice(v){
+    let x=Math.max(0,v);
+    const step = x<10?0.1:x<100?0.5:x<1000?1:x<10000?5:10;
+    x=Math.ceil(x/step)*step;
+    return Number(x.toFixed(DECIMALS));
   }
 
-  function makeNice(v){
-    let x = Math.max(0, v);
-    const step = x < 10 ? 0.1 : x < 100 ? 0.5 : x < 1000 ? 1 : x < 10000 ? 5 : 10;
-    x = Math.ceil(x/step)*step;
-    return Number(x.toFixed(DECIMALS));
+  // ===== Buttons =====
+  function btn(x,y,w,h,label,onClick){
+    const c=s.add.container(x,y);
+    const g=s.add.graphics();
+    const draw=(pressed=false)=>{
+      g.clear();
+      g.fillStyle(0xb7b7b7,1); g.fillRect(-w/2,-h/2,w,h);
+      g.fillStyle(0x8f8f8f,1); g.fillRect(-w/2,-h/2,w,6);
+      g.fillStyle(0xd7d7d7,1); g.fillRect(-w/2,h/2-6,w,6);
+      g.lineStyle(2,0x3a3a3a,1); g.strokeRect(-w/2,-h/2,w,h);
+      if(pressed){ g.fillStyle(0x000000,0.10); g.fillRect(-w/2,-h/2,w,h); }
+    };
+    draw(false);
+    const t=s.add.text(0,0,label,{fontFamily:"monospace",fontSize:"14px",color:"#101010",fontStyle:"bold"}).setOrigin(.5);
+    c.add([g,t]);
+    c.setSize(w,h);
+    c.setInteractive(new Phaser.Geom.Rectangle(-w/2,-h/2,w,h), Phaser.Geom.Rectangle.Contains);
+    c.on("pointerdown", ()=>{ draw(true); s.time.delayedCall(90,()=>draw(false)); onClick(); });
+    return c;
   }
 
 })();
