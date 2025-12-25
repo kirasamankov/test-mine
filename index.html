@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Block Bonus – Demo</title>
+  <title>Block Bonus – Your Game</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -11,74 +11,115 @@
 
   <style>
     html,body{height:100%;margin:0;background:#79d0ff;overflow:hidden}
-    #wrap{height:100%;display:flex;align-items:center;justify-content:center;padding:10px}
+    #wrap{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:10px}
     canvas{
       image-rendering: pixelated;
       image-rendering: crisp-edges;
-      border-radius: 18px;
+      border-radius: 22px;
       box-shadow: 0 30px 90px rgba(0,0,0,.35);
       outline: 2px solid rgba(0,0,0,.25);
       background:#79d0ff;
     }
+
+    /* Панель управления — ВНЕ канваса (можно не захватывать в видео) */
+    #hud{
+      width:min(520px, 96vw);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      background:rgba(0,0,0,.55);
+      color:#fff;
+      border-radius:14px;
+      padding:10px 12px;
+      font-family:"Press Start 2P", monospace;
+      font-size:10px;
+      user-select:none;
+    }
+    #hud.hidden{display:none}
+    .grp{display:flex;align-items:center;gap:10px}
+    button{
+      font-family:"Press Start 2P", monospace;
+      font-size:10px;
+      padding:8px 10px;
+      border-radius:10px;
+      border:0;
+      cursor:pointer;
+    }
+    .btn{background:#e9e9e9;color:#111}
+    .btn:active{transform:translateY(1px)}
+    input[type="range"]{width:220px}
+    .tiny{opacity:.8;font-size:8px}
   </style>
 
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
 </head>
+
 <body>
-<div id="wrap"></div>
+<div id="wrap">
+  <div id="game"></div>
+
+  <div id="hud">
+    <div class="grp">
+      <button id="start" class="btn">START</button>
+      <button id="rec" class="btn">REC</button>
+      <span class="tiny">Space=Start • R=REC</span>
+    </div>
+
+    <div class="grp">
+      <span>BET</span>
+      <input id="bet" type="range" min="100" max="5000" step="100" value="1000" />
+      <span id="betVal">1000</span>
+    </div>
+  </div>
+</div>
 
 <script>
 (() => {
-  // === ВАЖНО: честная пометка, чтобы не вводить людей в заблуждение ===
-  const DEMO_WATERMARK = "DEMO / SIMULATION";
+  // ====== НАСТРОЙКИ (как в твоём видео) ======
+  const W=360, H=640;
+  const FREE_SPINS = 4;
 
-  // === БОНУС / ФИЗИКА как в видео ===
-  const FREE_SPINS = 4; // 4 бесплатных вращения
-  const PANEL = { cols:5, rows:3 };
-  const DECIMALS = 2;
+  // ставка 100..5000
+  const BET_MIN=100, BET_MAX=5000, BET_STEP=100;
 
-  // Бет (без валюты)
-  const BET_MIN = 10, BET_MAX = 5000, BET_STEP = 10;
+  // сундуки: 5, открывается 3..5; если 3 — множители выше
+  const CHESTS_TOTAL=5, OPEN_MIN=3, OPEN_MAX=5;
 
-  // Сундуки
-  const CHESTS_TOTAL = 5;
-  const OPEN_MIN = 3, OPEN_MAX = 5; // 3..5
+  // тайминги максимально близко к твоему ощущению
+  const REEL_SPIN_MS=650;
+  const OVERLAY_MS=900;
+  const BETWEEN_SPINS_MS=220;
+  const HIT_STEP_MS=95;
+  const CHEST_STEP_MS=420;
 
-  // Тайминги/анимации (похоже на видео)
-  const REEL_SPIN_MS = 650;
-  const OVERLAY_MS = 900;
-  const BETWEEN_SPINS_MS = 220;
-  const HIT_STEP_MS = 95;
-  const CHEST_STEP_MS = 420;
+  const DECIMALS=2;
 
-  // === CANVAS (9:16) ===
-  const W = 360, H = 640;
+  // верхняя панель 5x3 по центру, как на твоём кадре
+  const TOP = { w:240, h:120, x:(W-240)/2, y:34, cols:5, rows:3 };
 
-  // Разметка (как в твоём видео)
-  const TOP = { x: 64, y: 26, w: 232, h: 128 };
-  const TOWER = { x: 120, baseY: 476, colW: 24, cell: 24, cols:5 };
-  const CHEST = { y: 500, w: 44, h: 44, gap: 6, startX: 60 };
-  const SLAB  = { x: 86, y: 560, w: 188, h: 32 };
+  // башня и сундуки как в кадре
+  const TOWER = { colW:24, cell:24, cols:5, x:(W-(24*5))/2, baseY:432 };
+  const CHEST = { y:464, w:44, h:44, gap:6, startX:(W-(CHESTS_TOTAL*44+(CHESTS_TOTAL-1)*6))/2 };
+  const SLAB  = { x:(W-188)/2, y:520, w:188, h:26 };
 
-  // Стартовая “форма” блоков (ступеньками)
-  const START_HEIGHTS = [6,5,6,5,6];
+  // начальная форма блоков (ступеньками)
+  const START_HEIGHTS=[2,2,2,2,2]; // как в твоём кадре, короткая стопка
 
-  // === КИРКИ (как в видео: разные материалы + число ударов) ===
-  // hits = сколько ударов добавляет эта кирка в колонку
-  const PICKAXES = [
-    { key:"WOOD",    hits:1, color:0x8b5a2b, metal:0x9a9a9a },
-    { key:"STONE",   hits:2, color:0x6b4a2b, metal:0x7f8c8d },
-    { key:"GOLD",    hits:3, color:0x7a4d20, metal:0xf1c40f },
-    { key:"DIAMOND", hits:4, color:0x5b3a1e, metal:0x4be7ff }
+  // === КИРКИ с ударами (как в видео) ===
+  // дерево/камень/золото/алмаз + цифра
+  const PICKS=[
+    {key:"WOOD",    hits:1, metal:0x9a9a9a},
+    {key:"STONE",   hits:2, metal:0x7f8c8d},
+    {key:"GOLD",    hits:3, metal:0xf1c40f},
+    {key:"DIAMOND", hits:4, metal:0x4be7ff},
   ];
 
-  // === КНИЖКА: апгрейд кирок в алмазные (как ты описал) ===
-  const BOOK_CHANCE = 0.08; // шанс книжки в ячейке (можно подправить)
-
-  // Пустые клетки в панели (в твоём видео часто есть пустые)
+  // книжка: апгрейд всех кирок в алмазные на этот спин
+  const BOOK_CHANCE = 0.08;
   const EMPTY_CHANCE = 0.35;
 
-  // === БЛОКИ (визуально как в видео: stone/red/diamond/gold/obsidian) ===
+  // блоки (визуально как в кадре)
   const BLOCKS = {
     STONE: { key:"STONE", hp:1, pay:0.15, base:0xd8d8d8, speck:0xa7a7a7 },
     RED:   { key:"RED",   hp:1, pay:0.30, base:0xdedede, speck:0xc93a3a },
@@ -87,10 +128,10 @@
     OBSI:  { key:"OBSI",  hp:2, pay:1.50, base:0x1c1630, speck:0x2f2850 },
   };
 
-  // Phaser (CANVAS — чтобы не было чёрного экрана)
+  // ====== Phaser (CANVAS — стабильнее) ======
   new Phaser.Game({
     type: Phaser.CANVAS,
-    parent: "wrap",
+    parent: "game",
     width: W,
     height: H,
     backgroundColor: "#79d0ff",
@@ -99,32 +140,26 @@
     scene: { create, update }
   });
 
+  // ====== STATE ======
   let s;
-  let running=false, recMode=false;
+  let running=false;
+  let recMode=false;
 
-  // деньги/ставка
-  let bet=100;
+  let bet=1000;
   let total=0, totalDisp=0;
 
-  // UI
-  let slabText, fsText, overlayC, uiC;
-
-  // верхняя панель (5x3)
-  let topG;
-  let topCells=[]; // {r,c,cont,item}
-
-  // башня блоков: 5 колонок, каждая — массив блоков снизу вверх
-  let cols=[]; // [{blocks:[{type,hp}]}]
+  let topCells=[];
+  let cols=[];
   let blockSprites=[];
-
-  // сундуки
   let chests=[];
-
-  // водяной знак
-  let watermark;
+  let slabText, fsText, overlayC;
+  let hudEl;
 
   function create(){
     s=this;
+
+    hudEl = document.getElementById("hud");
+    bindHUD();
 
     drawSky();
     drawGround();
@@ -137,19 +172,28 @@
 
     buildChests();
     drawSlab();
-
     buildOverlay();
-    buildUI();
-    setupREC();
-
-    watermark = s.add.text(8, 8, DEMO_WATERMARK, {
-      fontFamily: '"Press Start 2P", monospace',
-      fontSize: '8px',
-      color: 'rgba(0,0,0,.35)'
-    }).setDepth(999);
 
     setTotal(0);
-    renderTopPanel(makeSpinPanel(true)); // начальное состояние
+    renderTopPanel(makeSpinPanel(true));
+
+    // controls
+    s.input.keyboard?.on("keydown-SPACE", ()=>startBonus());
+    s.input.keyboard?.on("keydown-ENTER", ()=>startBonus());
+    s.input.keyboard?.on("keydown-R", ()=>toggleREC());
+
+    // mobile: tap=start, long press=REC
+    let pressTimer=null;
+    s.input.on("pointerdown", ()=>{
+      pressTimer = setTimeout(()=>toggleREC(), 450);
+    });
+    s.input.on("pointerup", ()=>{
+      if(pressTimer){
+        const t=pressTimer; pressTimer=null;
+        clearTimeout(t);
+        startBonus();
+      }
+    });
   }
 
   function update(){
@@ -158,17 +202,37 @@
     slabText.setText(fmt(totalDisp));
   }
 
-  // ============================
-  // FLOW 1: BLOCK BONUS → 4 SPINS → CHESTS
-  // ============================
+  function bindHUD(){
+    const betRange=document.getElementById("bet");
+    const betVal=document.getElementById("betVal");
+    const startBtn=document.getElementById("start");
+    const recBtn=document.getElementById("rec");
+
+    betRange.value=String(bet);
+    betVal.textContent=String(bet);
+
+    betRange.addEventListener("input", ()=>{
+      bet = clamp(parseInt(betRange.value,10), BET_MIN, BET_MAX);
+      bet = Math.round(bet/BET_STEP)*BET_STEP;
+      betVal.textContent=String(bet);
+    });
+
+    startBtn.addEventListener("click", ()=>startBonus());
+    recBtn.addEventListener("click", ()=>toggleREC());
+  }
+
+  function toggleREC(){
+    recMode=!recMode;
+    hudEl.classList.toggle("hidden", recMode);
+  }
+
+  // ============ FLOW (1-в-1 по механике) ============
   async function startBonus(){
     if(running) return;
     running=true;
-    lockUI(true);
 
     setTotal(0);
     resetChests();
-
     initTower();
     redrawTower();
 
@@ -187,59 +251,50 @@
     await chestPhase();
 
     running=false;
-    lockUI(false);
   }
 
   async function oneSpin(){
-    // “крутилка” как в видео: быстро меняем панель
     await reelSpin();
 
-    // Получаем финальную панель спина
     const panel = makeSpinPanel(false);
     renderTopPanel(panel);
 
-    // Если есть книжка — апгрейд “все кирки в алмазные” (как ты сказал)
-    const hasBook = panel.some(x => x && x.kind==="BOOK");
+    const hasBook = panel.some(x=>x && x.kind==="BOOK");
     if(hasBook){
-      await bookUpgradeFlash();
+      await bookFlash();
       for(let i=0;i<panel.length;i++){
-        if(panel[i] && panel[i].kind==="PICK"){
-          panel[i].pick = PICKAXES[3]; // DIAMOND
-        }
+        if(panel[i] && panel[i].kind==="PICK") panel[i].pick = PICKS[3]; // diamond
       }
       renderTopPanel(panel);
     }
 
-    // Считаем “удары” по колонкам (как в видео: кирка добавляет hits в свою колонку)
-    const hits = new Array(PANEL.cols).fill(0);
-    panel.forEach((cell, idx) => {
+    const hits = new Array(TOP.cols).fill(0);
+    panel.forEach((cell, idx)=>{
       if(!cell) return;
-      const c = idx % PANEL.cols;
+      const c = idx % TOP.cols;
       if(cell.kind==="PICK") hits[c] += cell.pick.hits;
     });
 
-    // Применяем удары: ломаем верхние блоки, блоки “падают” (stack.pop())
-    for(let c=0;c<PANEL.cols;c++){
-      let left = hits[c];
+    for(let c=0;c<TOP.cols;c++){
+      let left=hits[c];
       while(left>0){
-        const ok = hitTopBlock(c);
-        if(!ok) break;
+        if(!hitTopBlock(c)) break;
         left--;
         await wait(HIT_STEP_MS);
       }
-      redrawTower(); // после ударов колонка перерисована, выглядит как падение
+      redrawTower();
     }
   }
 
   function hitTopBlock(col){
-    const stack = cols[col].blocks;
+    const stack=cols[col].blocks;
     if(stack.length===0) return false;
 
-    const b = stack[stack.length-1];
+    const b=stack[stack.length-1];
     b.hp -= 1;
 
-    const p = blockToWorld(col, stack.length-1);
-    burst(p.x+12, p.y+12, b.type.speck);
+    const p=blockToWorld(col, stack.length-1);
+    burst(p.x+12,p.y+12,b.type.speck);
 
     if(b.hp<=0){
       stack.pop();
@@ -253,15 +308,13 @@
   async function chestPhase(){
     const openCount = rndi(OPEN_MIN, OPEN_MAX+1);
 
-    // меньше сундуков → выше мульты
     const pool = (openCount===3)
       ? {v:[5,10,12,15,20,25,30,40,50], w:[6,14,14,14,14,12,10,8,8]}
       : (openCount===4)
       ? {v:[2,3,5,8,10,12,15,20,25], w:[18,16,16,14,12,10,8,4,2]}
       : {v:[2,2,3,3,5,5,8,10,12], w:[22,20,16,14,12,8,5,2,1]};
 
-    // как в твоём кадре — центр часто оставляют закрытым
-    const order=[0,1,3,4,2];
+    const order=[0,1,3,4,2]; // центр чаще закрыт
     let opened=0;
     let cur=total;
 
@@ -280,19 +333,13 @@
       await wait(CHEST_STEP_MS);
     }
 
-    // добиваем, если из-за пропуска центра не хватило
     if(opened<openCount){
       for(const idx of [0,4,1,3,2]){
         if(opened>=openCount) break;
         if(chests[idx].open) continue;
-
         const mul = pickW(pool.v, pool.w);
-        openChest(idx);
-        showMul(idx, mul);
-
-        cur = cur * mul;
-        setTotal(cur);
-
+        openChest(idx); showMul(idx,mul);
+        cur = cur * mul; setTotal(cur);
         opened++;
         await wait(CHEST_STEP_MS);
       }
@@ -302,165 +349,113 @@
     await wait(260);
   }
 
-  // ============================
-  // TOP PANEL (5x3)
-  // ============================
+  // ============ TOP PANEL ============
   function drawTopFrame(){
-    const {x,y,w,h} = TOP;
-    topG = s.add.graphics();
+    const {x,y,w,h,cols,rows}=TOP;
+    const g=s.add.graphics();
+    g.fillStyle(0xbfc3c7,1); g.fillRect(x,y,w,h);
+    g.lineStyle(3,0x6b6b6b,1); g.strokeRect(x,y,w,h);
+    g.lineStyle(2,0x8d8d8d,1); g.strokeRect(x+2,y+2,w-4,h-4);
 
-    topG.fillStyle(0xd0d0d0,1); topG.fillRect(x,y,w,h);
-    topG.lineStyle(3,0x6b6b6b,1); topG.strokeRect(x,y,w,h);
-    topG.lineStyle(2,0x8d8d8d,1); topG.strokeRect(x+2,y+2,w-4,h-4);
-
-    const cw=Math.floor(w/PANEL.cols);
-    const ch=Math.floor(h/PANEL.rows);
-
-    topG.lineStyle(2,0xffffff,0.9);
-    for(let c=1;c<PANEL.cols;c++){
-      topG.beginPath(); topG.moveTo(x+c*cw,y+6); topG.lineTo(x+c*cw,y+h-6); topG.strokePath();
-    }
-    for(let r=1;r<PANEL.rows;r++){
-      topG.beginPath(); topG.moveTo(x+6,y+r*ch); topG.lineTo(x+w-6,y+r*ch); topG.strokePath();
-    }
+    const cw=Math.floor(w/cols), ch=Math.floor(h/rows);
+    g.lineStyle(2,0xffffff,0.9);
+    for(let c=1;c<cols;c++){ g.beginPath(); g.moveTo(x+c*cw,y+6); g.lineTo(x+c*cw,y+h-6); g.strokePath(); }
+    for(let r=1;r<rows;r++){ g.beginPath(); g.moveTo(x+6,y+r*ch); g.lineTo(x+w-6,y+r*ch); g.strokePath(); }
   }
 
   function buildTopCells(){
     topCells=[];
-    const {x,y,w,h} = TOP;
-    const cw=Math.floor(w/PANEL.cols);
-    const ch=Math.floor(h/PANEL.rows);
-
-    for(let r=0;r<PANEL.rows;r++){
-      for(let c=0;c<PANEL.cols;c++){
-        const cont = s.add.container(x+c*cw+cw/2, y+r*ch+ch/2);
-        topCells.push({r,c,cont,item:null});
+    const {x,y,w,h,cols,rows}=TOP;
+    const cw=Math.floor(w/cols), ch=Math.floor(h/rows);
+    for(let r=0;r<rows;r++){
+      for(let c=0;c<cols;c++){
+        const cont=s.add.container(x+c*cw+cw/2, y+r*ch+ch/2);
+        topCells.push({r,c,cont});
       }
     }
   }
 
   function makeSpinPanel(forceSome){
-    // массив длиной 15 (row-major)
-    const out = [];
-    for(let i=0;i<PANEL.cols*PANEL.rows;i++){
-      // пустые
-      if(Math.random() < EMPTY_CHANCE){
-        out.push(null);
-        continue;
-      }
-      // книжка
-      if(Math.random() < BOOK_CHANCE){
-        out.push({kind:"BOOK"});
-        continue;
-      }
-      // кирка (разные материалы)
-      // распределение похоже на видео: дерево чаще, алмаз реже
-      const pick = pickW(
-        [PICKAXES[0], PICKAXES[1], PICKAXES[2], PICKAXES[3]],
-        [46, 30, 18, 6]
-      );
+    const out=[];
+    for(let i=0;i<TOP.cols*TOP.rows;i++){
+      if(Math.random()<EMPTY_CHANCE){ out.push(null); continue; }
+      if(Math.random()<BOOK_CHANCE){ out.push({kind:"BOOK"}); continue; }
+      const pick=pickW([PICKS[0],PICKS[1],PICKS[2],PICKS[3]],[46,30,18,6]);
       out.push({kind:"PICK", pick});
     }
-
-    // чтобы в первом кадре не было совсем пусто
     if(forceSome){
-      out[1] = {kind:"PICK", pick:PICKAXES[0]};
-      out[2] = {kind:"PICK", pick:PICKAXES[0]};
-      out[3] = {kind:"PICK", pick:PICKAXES[2]};
-      out[6] = {kind:"PICK", pick:PICKAXES[1]};
+      out[1]={kind:"PICK", pick:PICKS[0]};
+      out[2]={kind:"PICK", pick:PICKS[0]};
+      out[3]={kind:"PICK", pick:PICKS[2]};
     }
     return out;
   }
 
   function renderTopPanel(panel){
     for(let i=0;i<topCells.length;i++){
-      const cell = topCells[i];
-      cell.item = panel[i];
+      const cell=topCells[i];
       cell.cont.removeAll(true);
-
-      if(!panel[i]) continue;
-
-      if(panel[i].kind==="BOOK"){
-        cell.cont.add(drawBookIcon());
-      }else{
-        cell.cont.add(drawPickaxeIcon(panel[i].pick.hits, panel[i].pick.metal));
-      }
+      const item=panel[i];
+      if(!item) continue;
+      if(item.kind==="BOOK") cell.cont.add(drawBook());
+      else cell.cont.add(drawPick(item.pick.hits, item.pick.metal));
     }
   }
 
-  function drawPickaxeIcon(hits, metalColor){
-    const g = s.add.graphics();
+  function drawPick(hits, metal){
+    const c=s.add.container(0,0);
+    const g=s.add.graphics();
 
-    // ручка
-    g.fillStyle(0x8b5a2b,1);
-    g.fillRect(-2,-10,4,22);
+    // handle
+    g.fillStyle(0x8b5a2b,1); g.fillRect(-2,-10,4,22);
+    // head
+    g.fillStyle(metal,1); g.fillRect(-12,-10,24,5);
 
-    // “металл” кирки (цвет зависит от материала)
-    g.fillStyle(metalColor,1);
-    g.fillRect(-12,-10,24,5);
-
-    // контур
     g.lineStyle(2,0x000000,0.30);
     g.strokeRect(-2,-10,4,22);
     g.strokeRect(-12,-10,24,5);
 
-    // цифра ударов
-    const n = String(hits);
-    const sh = pixelText(n, 15,-11,10,"#000"); sh.setAlpha(0.55);
-    const tx = pixelText(n, 14,-12,10,"#fff");
-
-    const c = s.add.container(0,0);
-    c.add([g, sh, tx]);
+    const sh=pixelText(String(hits), 15,-11,10,"#000"); sh.setAlpha(0.55);
+    const tx=pixelText(String(hits), 14,-12,10,"#fff");
+    c.add([g,sh,tx]);
     return c;
   }
 
-  function drawBookIcon(){
-    const c = s.add.container(0,0);
-    const g = s.add.graphics();
-
+  function drawBook(){
+    const c=s.add.container(0,0);
+    const g=s.add.graphics();
     g.fillStyle(0x2ecc71,1); g.fillRect(-12,-12,24,24);
     g.fillStyle(0xffffff,1); g.fillRect(-10,-10,10,20);
     g.fillStyle(0x0b8f3a,1); g.fillRect(0,-10,10,20);
-
-    g.lineStyle(2,0x000000,0.30);
-    g.strokeRect(-12,-12,24,24);
-
-    const t = pixelText("B", 0, 4, 10, "#000"); t.setOrigin(0.5);
+    g.lineStyle(2,0x000000,0.30); g.strokeRect(-12,-12,24,24);
+    const t=pixelText("B",0,4,10,"#000"); t.setOrigin(0.5);
     c.add([g,t]);
     return c;
   }
 
-  async function bookUpgradeFlash(){
-    // короткая “вспышка” как апгрейд
-    const r = s.add.rectangle(W/2, TOP.y + TOP.h/2, TOP.w, TOP.h, 0x4be7ff, 0.25).setDepth(400);
-    await wait(90);
-    r.destroy();
-    await wait(60);
+  async function bookFlash(){
+    const r=s.add.rectangle(W/2, TOP.y+TOP.h/2, TOP.w, TOP.h, 0x4be7ff, 0.25).setDepth(400);
+    await wait(90); r.destroy(); await wait(60);
   }
 
   function reelSpin(){
-    return new Promise(resolve=>{
+    return new Promise(res=>{
       const t0=s.time.now;
       const ev=s.time.addEvent({
         delay:55, loop:true,
         callback:()=>{
           renderTopPanel(makeSpinPanel(false));
-          if(s.time.now-t0>=REEL_SPIN_MS){
-            ev.remove(false);
-            resolve();
-          }
+          if(s.time.now-t0>=REEL_SPIN_MS){ ev.remove(false); res(); }
         }
       });
     });
   }
 
-  // ============================
-  // TOWER (blocks + falling)
-  // ============================
+  // ============ TOWER ============
   function initTower(){
     cols=[];
     for(let c=0;c<TOWER.cols;c++){
-      const h = START_HEIGHTS[c];
+      const h=START_HEIGHTS[c];
       const arr=[];
       for(let i=0;i<h;i++){
         const type = pickStartBlock(i);
@@ -471,18 +466,18 @@
   }
 
   function pickStartBlock(level){
-    // верх — больше stone/red, низ — больше gold/diamond
-    if(level>=4) return Math.random()<0.70 ? BLOCKS.STONE : BLOCKS.RED;
-    if(level>=2) return Math.random()<0.55 ? BLOCKS.RED : BLOCKS.GOLD;
-    return Math.random()<0.55 ? BLOCKS.DIAM : BLOCKS.GOLD;
+    // короткая стопка как у тебя: чаще золото/алмаз + немного обсидиана
+    if(level===0 && Math.random()<0.25) return BLOCKS.OBSI;
+    if(Math.random()<0.45) return BLOCKS.GOLD;
+    if(Math.random()<0.35) return BLOCKS.DIAM;
+    return BLOCKS.OBSI;
   }
 
   function redrawTower(){
     blockSprites.forEach(o=>o.destroy());
     blockSprites=[];
-
     for(let c=0;c<TOWER.cols;c++){
-      const stack = cols[c].blocks;
+      const stack=cols[c].blocks;
       for(let i=0;i<stack.length;i++){
         const b=stack[i];
         const p=blockToWorld(c,i);
@@ -499,44 +494,41 @@
 
   function drawBlock(x,y,t){
     const g=s.add.graphics();
-    g.fillStyle(t.base,1);
-    g.fillRect(x,y,24,24);
+    g.fillStyle(t.base,1); g.fillRect(x,y,24,24);
 
     if(t.key==="GOLD"){
       g.fillStyle(0xffffff,0.18);
       g.fillRect(x+2,y+2,8,20);
       g.fillRect(x+12,y+2,6,20);
     }
-
-    if(t.key==="RED"){
-      g.fillStyle(t.speck,1);
-      g.fillRect(x+3,y+4,4,3);
-      g.fillRect(x+10,y+8,5,4);
-      g.fillRect(x+15,y+3,4,3);
-      g.fillRect(x+6,y+15,5,4);
-    } else {
-      g.fillStyle(t.speck,1);
-      for(let i=0;i<5;i++) g.fillRect(x+rndi(2,20), y+rndi(2,20), 2, 2);
+    if(t.key==="OBSI"){
+      g.fillStyle(0x000000,0.18);
+      g.fillRect(x+2,y+2,20,20);
     }
+    if(t.key==="DIAM"){
+      g.fillStyle(0xffffff,0.14);
+      g.fillRect(x+2,y+6,20,4);
+      g.fillRect(x+2,y+14,20,4);
+    }
+
+    g.fillStyle(t.speck,1);
+    for(let i=0;i<5;i++) g.fillRect(x+rndi(2,20), y+rndi(2,20), 2, 2);
 
     g.lineStyle(2,0x000000,0.32);
     g.strokeRect(x,y,24,24);
     return g;
   }
 
-  // ============================
-  // CHESTS
-  // ============================
+  // ============ CHESTS ============
   function buildChests(){
     chests=[];
     for(let i=0;i<CHESTS_TOTAL;i++){
       const x = CHEST.startX + i*(CHEST.w+CHEST.gap);
-      const obj = {x, y:CHEST.y, open:false, g:s.add.graphics(), lock:null};
+      const obj={x, y:CHEST.y, open:false, g:s.add.graphics(), lock:null};
       chests.push(obj);
       drawChest(i,false);
     }
   }
-
   function resetChests(){ chests.forEach((_,i)=>drawChest(i,false)); }
   function openChest(i){ drawChest(i,true); }
 
@@ -559,26 +551,21 @@
     if(open){
       c.g.fillStyle(0x000000,0.10);
       c.g.fillRect(c.x,c.y-10,CHEST.w,10);
-
       c.g.fillStyle(0xffffff,1);
       c.g.fillRect(c.x+6,c.y-10,6,4);
       c.g.fillRect(c.x+CHEST.w-12,c.y-10,6,4);
-
       if(c.lock) c.lock.setVisible(false);
     } else {
       if(!c.lock){
-        c.lock = s.add.text(c.x+CHEST.w/2, c.y+CHEST.h/2+2, "🔒", {
-          fontFamily:"monospace", fontSize:"12px"
-        }).setOrigin(0.5);
+        c.lock=s.add.text(c.x+CHEST.w/2,c.y+CHEST.h/2+2,"🔒",{fontFamily:"monospace",fontSize:"12px"}).setOrigin(0.5);
       }
       c.lock.setVisible(true);
-      c.lock.setPosition(c.x+CHEST.w/2, c.y+CHEST.h/2+2);
+      c.lock.setPosition(c.x+CHEST.w/2,c.y+CHEST.h/2+2);
     }
   }
 
   function showMul(i, mul){
     const c=chests[i];
-
     const pad=s.add.graphics();
     pad.fillStyle(0xffffff,0.65);
     const w=44,h=16;
@@ -590,142 +577,60 @@
     txt.setOrigin(0.5);
 
     s.tweens.add({targets:[pad,txt], y:'-=10', duration:180, yoyo:true});
-    s.tweens.add({
-      targets:[pad,txt],
-      alpha:0,
-      duration:520,
-      delay:780,
-      onComplete:()=>{pad.destroy();txt.destroy();}
-    });
-
+    s.tweens.add({targets:[pad,txt], alpha:0, duration:520, delay:780, onComplete:()=>{pad.destroy();txt.destroy();}});
     burst(c.x+CHEST.w/2, c.y+8, 0xffd85a);
   }
 
-  // ============================
-  // SLAB (итог)
-  // ============================
+  // ============ SLAB / TEXT ============
   function drawSlab(){
     const g=s.add.graphics();
     g.fillStyle(0xbdbdbd,1); g.fillRect(SLAB.x,SLAB.y,SLAB.w,SLAB.h);
     g.lineStyle(2,0x6b6b6b,1); g.strokeRect(SLAB.x,SLAB.y,SLAB.w,SLAB.h);
     g.fillStyle(0x000000,0.12); g.fillRect(SLAB.x+2, SLAB.y+SLAB.h-4, SLAB.w-4, 4);
 
-    slabText = outlinedText("0.00", W/2, SLAB.y+SLAB.h/2+1, 16);
-    fsText = pixelText("", SLAB.x-52, SLAB.y-10, 10, "rgba(0,0,0,.55)");
+    slabText = outlinedText("0.00", W/2, SLAB.y+SLAB.h/2+1, 14);
+    fsText = pixelText("", SLAB.x-48, SLAB.y-8, 10, "rgba(0,0,0,.55)");
     fsText.setOrigin(0,1);
   }
 
-  // ============================
-  // OVERLAY
-  // ============================
   function buildOverlay(){
-    overlayC = s.add.container(0,0).setDepth(500).setVisible(false);
-
-    const dim = s.add.rectangle(W/2,H/2,W,H,0x000000,0.55);
+    overlayC=s.add.container(0,0).setDepth(500).setVisible(false);
+    const dim=s.add.rectangle(W/2,H/2,W,H,0x000000,0.55);
     overlayC.add(dim);
-
-    const t1 = outlinedText("BLOCK BONUS", W/2, H/2-46, 20);
-    const t2 = outlinedText(`${FREE_SPINS} FREE SPINS`, W/2, H/2-6, 22);
-
-    const sub = s.add.text(W/2, H/2+40, "Blocks are persistent for 4 spins.", {
-      fontFamily: '"Press Start 2P", monospace',
-      fontSize: "10px",
-      color: "#ffffff"
-    }).setOrigin(0.5);
-    sub.setShadow(2,2,"rgba(0,0,0,.45)",0,true,true);
-
-    overlayC.add([t1,t2,sub]);
+    const t1=outlinedText("BLOCK BONUS", W/2, H/2-46, 18);
+    const t2=outlinedText(`${FREE_SPINS} FREE SPINS`, W/2, H/2-6, 20);
+    overlayC.add([t1,t2]);
 
     overlayC.show=()=>{ overlayC.setVisible(true); overlayC.setAlpha(0); s.tweens.add({targets:overlayC,alpha:1,duration:160}); };
     overlayC.hide=()=>{ s.tweens.add({targets:overlayC,alpha:0,duration:160,onComplete:()=>overlayC.setVisible(false)}); };
   }
 
-  // ============================
-  // UI (BET / START) + REC
-  // ============================
-  function buildUI(){
-    uiC = s.add.container(0,0).setDepth(600);
-
-    const bg=s.add.graphics();
-    bg.fillStyle(0x000000,0.18);
-    bg.fillRect(0, H-42, W, 42);
-
-    const minus = uiBtn(W/2-120, H-22, 32, 22, "-", ()=>setBet(bet-BET_STEP));
-    const plus  = uiBtn(W/2+120, H-22, 32, 22, "+", ()=>setBet(bet+BET_STEP));
-
-    const panel=s.add.graphics();
-    panel.fillStyle(0xffffff,0.60);
-    panel.fillRect(W/2-72, H-34, 144, 24);
-    panel.lineStyle(2,0x000000,0.18);
-    panel.strokeRect(W/2-72, H-34, 144, 24);
-
-    const betT=s.add.text(W/2, H-22, `BET: ${bet}`, {
-      fontFamily: '"Press Start 2P", monospace',
-      fontSize: "10px",
-      color: "#0b0b0b"
-    }).setOrigin(0.5);
-
-    const start = uiBtn(W/2, H-10, 180, 24, "START", ()=>startBonus());
-
-    const hint = s.add.text(W-6, H-6, "R = REC", {
-      fontFamily:'"Press Start 2P", monospace',
-      fontSize:"8px",
-      color:"rgba(255,255,255,.55)"
-    }).setOrigin(1,1);
-
-    uiC.add([bg, minus, plus, panel, betT, start, hint]);
-    uiC.minus=minus; uiC.plus=plus; uiC.start=start; uiC.betText=betT;
+  function pixelText(str,x,y,size,color){
+    return s.add.text(x,y,String(str),{fontFamily:'"Press Start 2P", monospace',fontSize:`${size}px`,color});
+  }
+  function outlinedText(str,x,y,size){
+    const c=s.add.container(x,y);
+    const t=String(str);
+    const sh=s.add.text(2,2,t,{fontFamily:'"Press Start 2P", monospace',fontSize:`${size}px`,color:"#000"}).setOrigin(0.5);
+    sh.setAlpha(0.8);
+    const main=s.add.text(0,0,t,{fontFamily:'"Press Start 2P", monospace',fontSize:`${size}px`,color:"#fff"}).setOrigin(0.5);
+    main.setShadow(2,2,"rgba(0,0,0,.55)",0,true,true);
+    c.add([sh,main]);
+    c.setText=(v)=>{ const nv=String(v); sh.setText(nv); main.setText(nv); };
+    return c;
   }
 
-  function lockUI(lock){
-    if(lock){
-      uiC.start.disableInteractive();
-      uiC.minus.disableInteractive();
-      uiC.plus.disableInteractive();
-    }else{
-      uiC.start.setInteractive();
-      uiC.minus.setInteractive();
-      uiC.plus.setInteractive();
-    }
+  function floatWin(x,y,add){
+    const txt=outlinedText(fmt(add), x, y, 10);
+    txt.setDepth(400);
+    s.tweens.add({targets:txt, y:y-18, alpha:0, duration:700, onComplete:()=>txt.destroy()});
   }
 
-  function setBet(v){
-    if(running) return;
-    bet = clamp(v, BET_MIN, BET_MAX);
-    bet = Math.round(bet/BET_STEP)*BET_STEP;
-    uiC.betText.setText(`BET: ${bet}`);
-  }
-
-  function setupREC(){
-    s.input.keyboard?.on("keydown-R", ()=>toggleREC());
-    s.input.keyboard?.on("keydown-SPACE", ()=>startBonus());
-    s.input.keyboard?.on("keydown-ENTER", ()=>startBonus());
-
-    // тройной тап (телефон)
-    let taps=0,last=0;
-    s.input.on("pointerdown",(p)=>{
-      if(p.x < W-60 || p.y > 60) return;
-      const now=s.time.now;
-      if(now-last>450) taps=0;
-      taps++; last=now;
-      if(taps>=3){ taps=0; toggleREC(); }
-    });
-  }
-
-  function toggleREC(){
-    recMode=!recMode;
-    uiC.setVisible(!recMode);
-    // watermark оставляем (честная пометка)
-  }
-
-  // ============================
-  // BACKGROUND
-  // ============================
+  // ============ BACKGROUND ============
   function drawSky(){
     s.add.rectangle(W/2,H/2,W,H,0x79d0ff).setDepth(-50);
-    for(let i=0;i<8;i++) cloud(rndi(10,W-70), rndi(20,200), rndi(22,40));
+    for(let i=0;i<10;i++) cloud(rndi(10,W-70), rndi(20,220), rndi(22,40));
   }
-
   function cloud(x,y,size){
     const g=s.add.graphics().setDepth(-40);
     g.fillStyle(0xffffff,1);
@@ -735,105 +640,23 @@
     g.fillStyle(0x000000,0.06);
     g.fillRect(x,y+size/2-2,size+22,3);
   }
-
   function drawGround(){
     const g=s.add.graphics().setDepth(-30);
-    g.fillStyle(0x5fd23f,1); g.fillRect(0,520,W,14);
-    g.fillStyle(0xb8743c,1); g.fillRect(0,534,W,106);
-    g.fillStyle(0x000000,0.08); g.fillRect(0,520,W,120);
+    g.fillStyle(0x5fd23f,1); g.fillRect(0,470,W,14);
+    g.fillStyle(0xb8743c,1); g.fillRect(0,484,W,160);
+    g.fillStyle(0x000000,0.08); g.fillRect(0,470,W,200);
   }
 
-  // ============================
-  // FX / TEXT
-  // ============================
-  function floatWin(x,y,add){
-    const txt = outlinedText(fmt(add), x, y, 12);
-    txt.setDepth(400);
-    s.tweens.add({targets:txt, y:y-18, alpha:0, duration:700, onComplete:()=>txt.destroy()});
-  }
-
+  // ============ FX / MATH ============
   function burst(x,y,color){
     for(let i=0;i<10;i++){
       const p=s.add.rectangle(x,y,2,2,color,1).setDepth(300);
-      s.tweens.add({
-        targets:p,
-        x:x+rnd(-24,24),
-        y:y+rnd(-24,24),
-        alpha:{from:1,to:0},
-        duration:260,
-        onComplete:()=>p.destroy()
-      });
+      s.tweens.add({targets:p,x:x+rnd(-24,24),y:y+rnd(-24,24),alpha:{from:1,to:0},duration:260,onComplete:()=>p.destroy()});
     }
   }
 
-  function pixelText(str,x,y,size,color){
-    return s.add.text(x,y,String(str),{
-      fontFamily: '"Press Start 2P", monospace',
-      fontSize: `${size}px`,
-      color: color
-    });
-  }
-
-  function outlinedText(str,x,y,size){
-    const c=s.add.container(x,y);
-    const t=String(str);
-
-    const shadow = s.add.text(2,2,t,{
-      fontFamily:'"Press Start 2P", monospace',
-      fontSize:`${size}px`,
-      color:"#000"
-    }).setOrigin(0.5);
-    shadow.setAlpha(0.8);
-
-    const main = s.add.text(0,0,t,{
-      fontFamily:'"Press Start 2P", monospace',
-      fontSize:`${size}px`,
-      color:"#fff"
-    }).setOrigin(0.5);
-    main.setShadow(2,2,"rgba(0,0,0,.55)",0,true,true);
-
-    c.add([shadow,main]);
-    c.setText=(v)=>{ const nv=String(v); shadow.setText(nv); main.setText(nv); };
-    return c;
-  }
-
-  function uiBtn(x,y,w,h,label,onClick){
-    const c=s.add.container(x,y);
-    const g=s.add.graphics();
-
-    const draw=(pressed=false)=>{
-      g.clear();
-      g.fillStyle(0xb7b7b7,1); g.fillRect(-w/2,-h/2,w,h);
-      g.fillStyle(0x8f8f8f,1); g.fillRect(-w/2,-h/2,w,6);
-      g.fillStyle(0xd7d7d7,1); g.fillRect(-w/2,h/2-6,w,6);
-      g.lineStyle(2,0x3a3a3a,1); g.strokeRect(-w/2,-h/2,w,h);
-      if(pressed){ g.fillStyle(0x000000,0.10); g.fillRect(-w/2,-h/2,w,h); }
-    };
-    draw(false);
-
-    const t=s.add.text(0,0,label,{
-      fontFamily:'"Press Start 2P", monospace',
-      fontSize:"10px",
-      color:"#101010"
-    }).setOrigin(0.5);
-
-    c.add([g,t]);
-    c.setSize(w,h);
-    c.setInteractive(new Phaser.Geom.Rectangle(-w/2,-h/2,w,h), Phaser.Geom.Rectangle.Contains);
-    c.on("pointerdown", ()=>{ draw(true); s.time.delayedCall(90,()=>draw(false)); onClick(); });
-    return c;
-  }
-
-  // ============================
-  // UTILS
-  // ============================
   function setTotal(v){ total=Math.max(0,v); }
-  function wait(ms){ return new Promise(r=>s.time.delayedCall(ms,r)); }
-  function rnd(a,b){ return a + Math.random()*(b-a); }
-  function rndi(a,b){ return Math.floor(rnd(a,b)); }
-  function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
   function fmt(v){ return Math.max(0,v).toFixed(DECIMALS); }
-
   function makeNice(v){
     let x=Math.max(0,v);
     const step = x<10?0.1:x<100?0.5:x<1000?1:x<10000?5:10;
@@ -841,13 +664,17 @@
     return Number(x.toFixed(DECIMALS));
   }
 
+  function wait(ms){ return new Promise(r=>s.time.delayedCall(ms,r)); }
+  function rnd(a,b){ return a + Math.random()*(b-a); }
+  function rndi(a,b){ return Math.floor(rnd(a,b)); }
+  function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+
   function pickW(values, weights){
     const sum=weights.reduce((a,b)=>a+b,0);
     let r=Math.random()*sum;
     for(let i=0;i<values.length;i++){ r-=weights[i]; if(r<=0) return values[i]; }
     return values[values.length-1];
   }
-
 })();
 </script>
 </body>
