@@ -23,28 +23,42 @@
 
 <script>
 (() => {
-  // ====== НАСТРОЙКИ ======
-  const FREE_SPINS = 4;            // как в видео
-  const CHEST_COUNT = 5;
-  const DECIMALS = true;           // итог "327.00" как в видео
-  const ALWAYS_GOOD_CHESTS = true; // "хорошие множители" чаще
+  // =========================
+  // НАСТРОЙКИ ПОД ТВОЁ ВИДЕО
+  // =========================
+  const FREE_SPINS = 4;
+  const CHESTS_TOTAL = 5;
 
-  // Ставка выбирается пользователем (без валюты)
+  // Открывается 3..5 сундуков
+  const OPEN_MIN = 3;
+  const OPEN_MAX = 5;
+
+  // Итог всегда с точкой
+  const DECIMALS = 2; // "327.00"
+
+  // "служебная зона" снизу (чтобы её обрезать при записи)
+  // Всё управление будет только тут.
+  const SAFE_CROP_H = 86;
+
+  // BET выбирается, валюты НЕТ
   const BET_MIN = 10;
   const BET_MAX = 5000;
   const BET_STEP = 10;
 
-  // Внутреннее "пиксельное" разрешение
+  // Внутреннее пиксельное разрешение (9:16)
   const W = 360;
   const H = 640;
 
-  // Layout (похоже по расположению на видео)
-  const TOP = { x: 38, y: 44, cols: 5, rows: 3, cw: 56, ch: 38, pad: 4 };   // 5x3
-  const GRID = { x: 40, y: 190, cols: 5, rows: 6, cw: 56, ch: 56 };        // 5x6
-  const CHEST_Y = 552;
-  const SLAB_Y  = 602;
+  // Активная область игры (как на видео) — ВЫШЕ safe-crop зоны
+  const GAME_H = H - SAFE_CROP_H;
 
-  // Символы сверху (кирки + бонус-орб)
+  // Layout (подогнано, чтобы выглядело как на ролике)
+  const TOP = { x: 36, y: 36, cols: 5, rows: 3, cw: 56, ch: 38, pad: 4 };
+  const GRID = { x: 40, y: 180, cols: 5, rows: 6, cw: 56, ch: 56 };
+  const CHEST_Y = 520;
+  const SLAB_Y  = 574;  // серый итоговый бар (он в зоне игры, НЕ в safe-crop)
+
+  // ===== Символы =====
   const SYMS = [
     { k:"P1", hits:1, icon:"⛏", sub:"+1" },
     { k:"P2", hits:2, icon:"⛏", sub:"+2" },
@@ -52,7 +66,7 @@
     { k:"ORB",hits:0, icon:"◉", sub:"BONUS" }
   ];
 
-  // Блоки (свои, но похожие по слоям)
+  // ===== Блоки =====
   const BLOCK_TYPES = [
     { key:"GRASS", hp:1, base:0x5fcf4a, accent:0x3ea536, pay:0.00 },
     { key:"DIRT",  hp:1, base:0xb4723a, accent:0x8d5524, pay:0.00 },
@@ -63,8 +77,8 @@
     { key:"OBSI",  hp:4, base:0x2a2438, accent:0x1a1630, pay:2.50 }
   ];
 
-  // ====== Phaser ======
-  const game = new Phaser.Game({
+  // ===== Phaser =====
+  new Phaser.Game({
     type: Phaser.AUTO,
     parent: "wrap",
     width: W,
@@ -75,93 +89,241 @@
     scene: { create, update }
   });
 
-  // ====== State ======
+  // ===== State =====
   let s;
   let topCells = [];
   let blocks = [];
   let chests = [];
   let overlay;
+  let guide; // линия "можно обрезать" (помогает)
+  let running = false;
 
   let bet = 100;
-  let total = 0;      // итог (на серой плашке)
-  let totalDisp = 0;
 
-  let running = false;
+  let total = 0;
+  let totalDisp = 0;
   let spinIndex = 0;
 
-  // UI
-  let startBtn, minusBtn, plusBtn, betText, slabText, fsText;
+  // UI (в safe-crop зоне)
+  let btnStart, btnMinus, btnPlus, betText;
+
+  // slab
+  let slabText, fsText;
 
   function create(){
     s = this;
 
-    drawSky(s);
+    drawSky();
 
-    // Рамка сверху (reels)
-    drawFrame(18, 34, W-36, 140);
+    // Линия подсказки, где обрезать (можешь выключить в коде: guide.setVisible(false))
+    guide = s.add.graphics();
+    guide.lineStyle(2, 0x000000, 0.15);
+    guide.beginPath();
+    guide.moveTo(0, GAME_H);
+    guide.lineTo(W, GAME_H);
+    guide.strokePath();
+    const gtxt = s.add.text(W-6, GAME_H-6, "CROP BELOW", {fontFamily:"monospace",fontSize:"10px",color:"rgba(0,0,0,.35)",fontStyle:"bold"}).setOrigin(1,1);
 
-    // 5x3
+    // Рамки в "игровой зоне"
+    drawFrame(18, 26, W-36, 140);
+    drawFrame(24, 172, W-48, 360);
+
+    // reels + blocks
     buildTop();
-
-    // Рамка для блоков
-    drawFrame(24, 182, W-48, 380);
     buildBlocks();
 
-    // сундуки
+    // сундуки (в игровой зоне)
     buildChests();
 
-    // нижняя плашка суммы (как на видео)
+    // итоговая плашка (в игровой зоне)
     buildSlab();
 
-    // UI выбора ставки + START (и только это)
-    buildBetUI();
+    // UI в safe-crop зоне (можно обрезать и его не будет видно)
+    buildSafeUI();
 
-    // overlay "BLOCK BONUS 4 FREE SPINS"
+    // overlay как в видео
     overlay = buildOverlay();
 
-    // начальное заполнение
-    randomizeTop(false);
-    updateSlab(0);
+    randomizeTop(true);
+    setTotal(0);
   }
 
   function update(){
-    // плавная анимация цифр на плашке
     totalDisp += (total - totalDisp) * 0.18;
-    if (Math.abs(total-totalDisp) < 0.01) totalDisp = total;
-    slabText.setText(fmtMoney(totalDisp));
+    if (Math.abs(total-totalDisp) < 0.005) totalDisp = total;
+    slabText.setText(fmt(totalDisp));
   }
 
-  // ====== UI ======
-  function buildBetUI(){
-    // маленькая панель bet над START
-    const y = SLAB_Y - 40;
+  // =========================
+  // FLOW: START -> overlay -> 4 spins -> open 3..5 chests -> finish
+  // =========================
+  async function startBonus(){
+    if(running) return;
+    running = true;
 
-    minusBtn = makePixelButton(W/2 - 110, y, 34, 28, "-", () => setBet(bet - BET_STEP));
-    plusBtn  = makePixelButton(W/2 + 110, y, 34, 28, "+", () => setBet(bet + BET_STEP));
+    lockUI(true);
 
+    spinIndex = 0;
+    setTotal(0);
+    resetChests();
+    resetBlocksPersistent();
+
+    // overlay
+    overlay.show();
+    await wait(900);
+    overlay.hide();
+    await wait(250);
+
+    // 4 spins
+    for(let i=0;i<FREE_SPINS;i++){
+      spinIndex = i+1;
+      fsText.setText(`FREE SPIN ${spinIndex}/${FREE_SPINS}`);
+      await doOneSpin();
+      await wait(240);
+    }
+    fsText.setText("");
+
+    // сундуки 3..5
+    await doChestsPhase();
+
+    // конец
+    running = false;
+    lockUI(false);
+  }
+
+  async function doOneSpin(){
+    await reelSpin();
+    const hits = [0,0,0,0,0];
+
+    topCells.forEach(cell => { hits[cell.c] += cell.sym.hits; });
+
+    // делаем, чтобы в бонусе всегда было “движение” как на видео
+    for(let i=0;i<5;i++) hits[i] += rndi(1,4);
+
+    for(let col=0; col<5; col++){
+      let left = hits[col];
+      for(let row=0; row<6; row++){
+        if(left<=0) break;
+        const b = blocks.find(z => z.c===col && z.r===row);
+        if(!b || !b.alive) continue;
+        await hitBlock(b);
+        left--;
+      }
+    }
+    refreshHp();
+  }
+
+  async function doChestsPhase(){
+    await wait(260);
+
+    // Сколько сундуков откроем (3..5)
+    const openCount = rndi(OPEN_MIN, OPEN_MAX+1);
+
+    // Чем меньше сундуков, тем выше мульты (как ты просил)
+    // openCount=3 => больше вероятность 10..50
+    // openCount=5 => чаще 2..10
+    const pool = (openCount === 3)
+      ? { values:[5,10,12,15,20,25,30,40,50], weights:[6,14,14,14,14,12,10,8,8] }
+      : (openCount === 4)
+      ? { values:[2,3,5,8,10,12,15,20,25], weights:[18,16,16,14,12,10,8,4,2] }
+      : { values:[2,2,3,3,5,5,8,10,12], weights:[22,20,16,14,12,8,5,2,1] };
+
+    // Выбираем какие сундуки откроются (слева направо для “как в ролике”)
+    // Можно сделать случайные — но видео обычно слева направо.
+    const openIdx = [];
+    for(let i=0;i<openCount;i++) openIdx.push(i);
+
+    // Применение: множители “накручивают” текущий total
+    let current = total;
+
+    for(let k=0;k<openIdx.length;k++){
+      const i = openIdx[k];
+      const c = chests[i];
+      c.opened = true;
+      c.lock.setAlpha(0);
+      drawChest(c.g, c.x,c.y,c.w,c.h,true);
+
+      const mul = pickWeighted(pool.values, pool.weights);
+
+      // надпись xN
+      const txt = s.add.text(c.x+c.w/2, c.y-10, `x${mul}`, {
+        fontFamily:"monospace",
+        fontSize:"16px",
+        color:"#0b0b0b",
+        fontStyle:"bold",
+        backgroundColor:"rgba(255,255,255,.65)",
+        padding:{left:6,right:6,top:2,bottom:2}
+      }).setOrigin(0.5);
+
+      s.tweens.add({targets:txt, y:txt.y-10, duration:180, yoyo:true});
+      pixelBurst(c.x+c.w/2, c.y+8, 0xffd34a);
+
+      // множитель применяем к total
+      current = current * mul;
+      setTotal(current);
+
+      await wait(420);
+      s.tweens.add({targets:txt, alpha:0, duration:520, delay:360, onComplete:()=>txt.destroy()});
+    }
+
+    // Если открылось меньше 5 сундуков — остальные остаются закрытыми (как просишь)
+    // Финальный "nice"
+    setTotal(makeNice(current));
+    await wait(450);
+  }
+
+  // =========================
+  // UI / SAFE CROP ZONE
+  // =========================
+  function buildSafeUI(){
+    const baseY = GAME_H + 14; // вся панель ниже линии crop
+
+    // фон панели
     const g = s.add.graphics();
-    g.fillStyle(0xd6d6d6,1);
-    g.fillRect(W/2-70, y-14, 140, 28);
-    g.lineStyle(2, 0x6b6b6b, 1);
-    g.strokeRect(W/2-70, y-14, 140, 28);
+    g.fillStyle(0x000000, 0.18);
+    g.fillRect(0, GAME_H, W, SAFE_CROP_H);
 
-    betText = s.add.text(W/2, y, `BET: ${bet}`, {
-      fontFamily:"monospace", fontSize:"12px", color:"#101010", fontStyle:"bold"
+    // BET - + (маленькие)
+    btnMinus = makeBtn(W/2 - 120, baseY+18, 34, 26, "-", () => setBet(bet - BET_STEP));
+    btnPlus  = makeBtn(W/2 + 120, baseY+18, 34, 26, "+", () => setBet(bet + BET_STEP));
+
+    const bg = s.add.graphics();
+    bg.fillStyle(0xffffff, 0.55);
+    bg.fillRect(W/2-70, baseY+5, 140, 26);
+    bg.lineStyle(2, 0x000000, 0.18);
+    bg.strokeRect(W/2-70, baseY+5, 140, 26);
+
+    betText = s.add.text(W/2, baseY+18, `BET: ${bet}`, {
+      fontFamily:"monospace", fontSize:"12px", color:"#0b0b0b", fontStyle:"bold"
     }).setOrigin(0.5);
 
-    // START (единственная большая кнопка)
-    startBtn = makePixelButton(W/2, y+34, 160, 34, "СТАРТ", () => startBonus());
+    // START
+    btnStart = makeBtn(W/2, baseY+52, 170, 30, "СТАРТ", () => startBonus());
+  }
+
+  function lockUI(lock){
+    if(lock){
+      btnStart.disableInteractive();
+      btnMinus.disableInteractive();
+      btnPlus.disableInteractive();
+    } else {
+      btnStart.setInteractive();
+      btnMinus.setInteractive();
+      btnPlus.setInteractive();
+    }
   }
 
   function setBet(v){
-    if (running) return;
+    if(running) return;
     bet = clamp(v, BET_MIN, BET_MAX);
     bet = Math.round(bet / BET_STEP) * BET_STEP;
     betText.setText(`BET: ${bet}`);
   }
 
+  // =========================
+  // SLAB (итог) + FREE SPIN LABEL
+  // =========================
   function buildSlab(){
-    // серая плашка как в видео
     const g = s.add.graphics();
     g.fillStyle(0xbdbdbd, 1);
     g.fillRect(24, SLAB_Y, W-48, 30);
@@ -177,51 +339,41 @@
     }).setOrigin(0,1);
   }
 
-  function updateSlab(value){
-    total = Math.max(0, value);
+  function setTotal(v){
+    total = Math.max(0, v);
   }
 
+  // =========================
+  // OVERLAY (BLOCK BONUS 4 FREE SPINS)
+  // =========================
   function buildOverlay(){
     const c = s.add.container(0,0).setDepth(999).setVisible(false);
+    const dim = s.add.rectangle(W/2, GAME_H/2, W, GAME_H, 0x000000, 0.65);
 
-    const dim = s.add.rectangle(W/2, H/2, W, H, 0x000000, 0.65);
-    const box = s.add.graphics();
-    box.fillStyle(0x0b0b0b, 0.75);
-    box.fillRect(0, 0, W, H);
-    box.clear(); // потом рисуем текстом
-
-    const title = s.add.text(W/2, H/2 - 30, "BLOCK BONUS", {
+    const title = s.add.text(W/2, GAME_H/2 - 30, "BLOCK BONUS", {
       fontFamily:"monospace", fontSize:"22px", color:"#ffffff", fontStyle:"bold"
     }).setOrigin(0.5);
 
-    const big = s.add.text(W/2, H/2, `${FREE_SPINS} FREE SPINS`, {
+    const big = s.add.text(W/2, GAME_H/2, `${FREE_SPINS} FREE SPINS`, {
       fontFamily:"monospace", fontSize:"26px", color:"#ffffff", fontStyle:"bold"
     }).setOrigin(0.5);
 
-    const sub = s.add.text(W/2, H/2 + 32, "Blocks are persistent for 4 spins.", {
+    const sub = s.add.text(W/2, GAME_H/2 + 32, "Blocks are persistent for 4 spins.", {
       fontFamily:"monospace", fontSize:"12px", color:"rgba(255,255,255,.75)", fontStyle:"bold"
     }).setOrigin(0.5);
 
     c.add([dim, title, big, sub]);
 
-    c.setInteractive(new Phaser.Geom.Rectangle(0,0,W,H), Phaser.Geom.Rectangle.Contains);
-    // чтобы по тапу закрывать (как будто "продолжить")
-    c.on("pointerdown", ()=>{ /* ничего, управляем сами */ });
-
-    c.show = () => {
-      c.setVisible(true);
-      c.setAlpha(0);
-      s.tweens.add({targets:c, alpha:1, duration:180});
-    };
-    c.hide = () => {
-      s.tweens.add({targets:c, alpha:0, duration:180, onComplete:()=>c.setVisible(false)});
-    };
-
+    c.show = () => { c.setVisible(true); c.setAlpha(0); s.tweens.add({targets:c, alpha:1, duration:180}); };
+    c.hide = () => { s.tweens.add({targets:c, alpha:0, duration:180, onComplete:()=>c.setVisible(false)}); };
     return c;
   }
 
-  // ====== BUILD TOP ======
+  // =========================
+  // TOP (5x3)
+  // =========================
   function buildTop(){
+    topCells = [];
     for(let r=0;r<TOP.rows;r++){
       for(let c=0;c<TOP.cols;c++){
         const x = TOP.x + c*(TOP.cw+TOP.pad);
@@ -249,14 +401,13 @@
     return {x,y,w,h,r,c,g,icon,sub,sym:SYMS[0]};
   }
 
-  function randomizeTop(forceBonus){
+  function randomizeTop(forceOrb){
     topCells.forEach(cell=>{
       let sym;
-      if(forceBonus && cell.r===0 && cell.c===2){
+      if(forceOrb && cell.r===0 && cell.c===2){
         sym = SYMS.find(z=>z.k==="ORB");
       } else {
-        // похоже на видео: много кирок, иногда orb
-        sym = pickWeighted([SYMS[0],SYMS[1],SYMS[2],SYMS[3]], [22,30,30,18]);
+        sym = pickWeighted([SYMS[0],SYMS[1],SYMS[2],SYMS[3]], [20,30,30,20]);
       }
       setTop(cell, sym);
     });
@@ -277,63 +428,87 @@
     }
   }
 
-  // ====== BLOCKS ======
+  function reelSpin(){
+    return new Promise(resolve=>{
+      const t0 = s.time.now;
+      const dur = 650;
+      const ev = s.time.addEvent({
+        delay: 55, loop:true,
+        callback: ()=>{
+          randomizeTop(false);
+          topCells.forEach(c=> c.icon.y = (c.y + c.h/2 - 2) + rndi(-1,2));
+          if(s.time.now - t0 >= dur){
+            ev.remove(false);
+            randomizeTop(true);
+            topCells.forEach(c=> c.icon.y = (c.y + c.h/2 - 2));
+            resolve();
+          }
+        }
+      });
+    });
+  }
+
+  // =========================
+  // BLOCKS (5x6) persistent
+  // =========================
   function buildBlocks(){
     blocks = [];
     for(let r=0;r<GRID.rows;r++){
       for(let c=0;c<GRID.cols;c++){
         const x = GRID.x + c*GRID.cw;
         const y = GRID.y + r*GRID.ch;
-        const type = pickBlockLayer(r,c);
+        const type = layerType(r,c);
         blocks.push(makeBlock(x,y,GRID.cw,GRID.ch,r,c,type));
       }
     }
-    refreshHpText();
+    refreshHp();
   }
 
-  function pickBlockLayer(r,c){
-    // слои как на видео: верх земля/камень, ниже руда/алмазы/золото, иногда обсидиан
-    if(r===0) return BLOCK_TYPES.find(t=>t.key==="GRASS");
-    if(r===1) return BLOCK_TYPES.find(t=>t.key==="DIRT");
-    if(r===2) return BLOCK_TYPES.find(t=>t.key==="STONE");
-    if(r===3) return BLOCK_TYPES.find(t=>t.key==="RED");
-    if(r===4) return (c<2 ? BLOCK_TYPES.find(t=>t.key==="DIAM") : BLOCK_TYPES.find(t=>t.key==="GOLD"));
-    if(r===5) return (c===4 ? BLOCK_TYPES.find(t=>t.key==="OBSI") : pickWeighted(
-      [BLOCK_TYPES.find(t=>t.key==="DIAM"), BLOCK_TYPES.find(t=>t.key==="GOLD"), BLOCK_TYPES.find(t=>t.key==="STONE")],
+  function resetBlocksPersistent(){
+    blocks.forEach(b=>{
+      b.alive=true;
+      b.type = layerType(b.r,b.c);
+      b.hp = b.type.hp;
+      b.g.clear();
+      drawBlock(b.g, b.x,b.y,b.w,b.h,b.type);
+      b.hpText.setAlpha(1);
+    });
+    refreshHp();
+  }
+
+  function layerType(r,c){
+    if(r===0) return findType("GRASS");
+    if(r===1) return findType("DIRT");
+    if(r===2) return findType("STONE");
+    if(r===3) return findType("RED");
+    if(r===4) return (c<2 ? findType("DIAM") : findType("GOLD"));
+    if(r===5) return (c===4 ? findType("OBSI") : pickWeighted(
+      [findType("DIAM"), findType("GOLD"), findType("STONE")],
       [28, 45, 27]
     ));
-    return BLOCK_TYPES.find(t=>t.key==="STONE");
+    return findType("STONE");
   }
+
+  function findType(k){ return BLOCK_TYPES.find(t=>t.key===k); }
 
   function makeBlock(x,y,w,h,r,c,type){
     const g = s.add.graphics();
     drawBlock(g,x,y,w,h,type);
-
-    const hpText = s.add.text(x+4,y+4,"",{
-      fontFamily:"monospace", fontSize:"10px", color:"rgba(0,0,0,.65)", fontStyle:"bold"
-    });
-
+    const hpText = s.add.text(x+4,y+4,"",{fontFamily:"monospace",fontSize:"10px",color:"rgba(0,0,0,.65)",fontStyle:"bold"});
     return {x,y,w,h,r,c,type,hp:type.hp,alive:true,g,hpText};
   }
 
   function drawBlock(g,x,y,w,h,type){
     g.fillStyle(type.base,1);
     g.fillRect(x,y,w,h);
-
-    // пиксельные вкрапления
     for(let i=0;i<10;i++){
       g.fillStyle(type.accent,0.9);
       g.fillRect(x+rndi(2,w-6), y+rndi(2,h-6), 2, 2);
     }
-
-    // рамка
     g.lineStyle(2, 0x000000, 0.22);
     g.strokeRect(x,y,w,h);
-
-    // блик
     g.fillStyle(0xffffff, 0.10);
     g.fillRect(x+2,y+2,w-4,6);
-
     if(type.key==="GRASS"){
       g.fillStyle(0x56c83f,1);
       g.fillRect(x,y,w,10);
@@ -344,16 +519,53 @@
     }
   }
 
-  function refreshHpText(){
+  function refreshHp(){
     blocks.forEach(b => b.hpText.setText(b.alive ? `HP:${b.hp}` : ""));
   }
 
-  // ====== CHESTS ======
+  function hitBlock(b){
+    return new Promise(resolve=>{
+      b.hp -= 1;
+      pixelBurst(b.x+b.w/2, b.y+b.h/2, b.type.accent);
+
+      const crack = s.add.graphics();
+      crack.lineStyle(2, 0x000000, 0.22);
+      crack.beginPath();
+      crack.moveTo(b.x + rndi(6,b.w-6), b.y + rndi(6,b.h-6));
+      crack.lineTo(b.x + rndi(6,b.w-6), b.y + rndi(6,b.h-6));
+      crack.strokePath();
+      s.time.delayedCall(120, ()=> crack.destroy());
+
+      if(b.hp<=0){
+        b.alive=false;
+
+        // pay: добавка как в видео (накапливаем к итогу)
+        const add = bet * b.type.pay;
+        setTotal(total + add);
+
+        s.time.delayedCall(80, ()=>{
+          b.g.clear();
+          b.g.fillStyle(0x000000, 0.06);
+          b.g.fillRect(b.x,b.y,b.w,b.h);
+          b.g.lineStyle(1, 0x000000, 0.12);
+          b.g.strokeRect(b.x,b.y,b.w,b.h);
+        });
+        s.tweens.add({targets:b.hpText, alpha:0, duration:140});
+      } else {
+        b.hpText.setText(`HP:${b.hp}`);
+      }
+      s.time.delayedCall(130, resolve);
+    });
+  }
+
+  // =========================
+  // CHESTS (5 total, open 3..5)
+  // =========================
   function buildChests(){
     chests = [];
     const startX = 28;
     const cw = 60;
-    for(let i=0;i<CHEST_COUNT;i++){
+    for(let i=0;i<CHESTS_TOTAL;i++){
       const x = startX + i*(cw+6);
       const y = CHEST_Y;
       chests.push(makeChest(x,y,cw,38,i));
@@ -373,14 +585,12 @@
     g.fillRect(x,y,w,h);
     g.fillStyle(0xa86e2c,1);
     g.fillRect(x,y,w,12);
-
     for(let k=0;k<4;k++){
       g.fillStyle(0x000000,0.10);
       g.fillRect(x+6+k*14, y, 2, h);
     }
     g.lineStyle(2,0x000000,0.22);
     g.strokeRect(x,y,w,h);
-
     if(opened){
       g.fillStyle(0x000000,0.18);
       g.fillRect(x, y-10, w, 10);
@@ -395,244 +605,25 @@
     });
   }
 
-  // ====== FLOW: START -> overlay -> 4 spins -> chests -> end ======
-  async function startBonus(){
-    if(running) return;
-    running = true;
-
-    // блокируем UI
-    startBtn.disableInteractive();
-    minusBtn.disableInteractive();
-    plusBtn.disableInteractive();
-
-    // reset
-    spinIndex = 0;
-    total = 0;
-    totalDisp = 0;
-    updateSlab(0);
-    resetChests();
-
-    // восстановить блоки (они будут persistent на 4 спина)
-    blocks.forEach(b=>{
-      b.alive=true;
-      b.type = pickBlockLayer(b.r,b.c);
-      b.hp = b.type.hp;
-      b.g.clear();
-      drawBlock(b.g,b.x,b.y,b.w,b.h,b.type);
-      b.hpText.setAlpha(1);
-    });
-    refreshHpText();
-
-    // показать overlay как в видео
-    overlay.show();
-    await wait(900);
-    overlay.hide();
-    await wait(250);
-
-    // запускаем 4 спина подряд
-    for(let i=0;i<FREE_SPINS;i++){
-      spinIndex = i+1;
-      fsText.setText(`FREE SPIN ${spinIndex}/${FREE_SPINS}`);
-      await doOneSpin();
-      await wait(250);
-    }
-
-    fsText.setText("");
-
-    // фаза сундуков: показываем множители и считаем итог
-    await doChestsPhase();
-
-    // финал
-    running = false;
-    startBtn.setInteractive();
-    minusBtn.setInteractive();
-    plusBtn.setInteractive();
-  }
-
-  async function doOneSpin(){
-    // 1) reel-spin анимация
-    await reelSpin();
-
-    // 2) считаем удары по колонкам
-    const hits = [0,0,0,0,0];
-    let sawOrb = false;
-    topCells.forEach(cell=>{
-      hits[cell.c] += cell.sym.hits;
-      if(cell.sym.k==="ORB") sawOrb=true;
-    });
-
-    // в бонусе удары "приятнее" (как ощущается на видео)
-    for(let i=0;i<5;i++){
-      hits[i] += rndi(1,4);
-    }
-
-    // 3) применяем удары сверху вниз (блоки сохраняются между спинами!)
-    for(let col=0; col<5; col++){
-      let left = hits[col];
-      for(let row=0; row<6; row++){
-        if(left<=0) break;
-        const b = blocks.find(z=>z.c===col && z.r===row);
-        if(!b || !b.alive) continue;
-
-        await hitBlock(b);
-        left--;
-      }
-    }
-    refreshHpText();
-  }
-
-  function reelSpin(){
-    return new Promise(resolve=>{
-      const t0 = s.time.now;
-      const dur = 650;
-      const ev = s.time.addEvent({
-        delay: 55,
-        loop: true,
-        callback: ()=>{
-          randomizeTop(false);
-          topCells.forEach(c=> c.icon.y = (c.y + c.h/2 - 2) + rndi(-1,2));
-
-          if(s.time.now - t0 >= dur){
-            ev.remove(false);
-            // финальный результат: часто ORB как на ролике
-            randomizeTop(true);
-            topCells.forEach(c=> c.icon.y = (c.y + c.h/2 - 2));
-            resolve();
-          }
-        }
-      });
-    });
-  }
-
-  function hitBlock(b){
-    return new Promise(resolve=>{
-      b.hp -= 1;
-
-      // “пыль/частицы”
-      pixelBurst(b.x+b.w/2, b.y+b.h/2, b.type.accent);
-
-      // трещина
-      const crack = s.add.graphics();
-      crack.lineStyle(2, 0x000000, 0.22);
-      crack.beginPath();
-      crack.moveTo(b.x + rndi(6,b.w-6), b.y + rndi(6,b.h-6));
-      crack.lineTo(b.x + rndi(6,b.w-6), b.y + rndi(6,b.h-6));
-      crack.strokePath();
-      s.time.delayedCall(120, ()=> crack.destroy());
-
-      if(b.hp <= 0){
-        b.alive = false;
-
-        // добавляем к сумме (без валюты, как в видео)
-        const add = bet * b.type.pay;
-        updateSlab(total + add);
-
-        // “разрушение”
-        s.time.delayedCall(80, ()=>{
-          b.g.clear();
-          b.g.fillStyle(0x000000, 0.06);
-          b.g.fillRect(b.x,b.y,b.w,b.h);
-          b.g.lineStyle(1, 0x000000, 0.12);
-          b.g.strokeRect(b.x,b.y,b.w,b.h);
-        });
-
-        s.tweens.add({targets:b.hpText, alpha:0, duration:140});
-      } else {
-        b.hpText.setText(`HP:${b.hp}`);
-      }
-
-      s.time.delayedCall(130, resolve);
-    });
-  }
-
-  async function doChestsPhase(){
-    // как в видео: сундуки открываются и дают множители, итог резко растёт
-
-    // слегка “собираем” башню по центру (упрощённо: визуально оставляем, но эффект добавим)
-    // Просто пауза, чтобы выглядело как переход.
-    await wait(350);
-
-    // Открываем все 5 сундуков, показываем xN над каждым
-    // и применяем множитель к накопленной сумме.
-    let current = total;
-
-    for(let i=0;i<CHEST_COUNT;i++){
-      const c = chests[i];
-      c.opened = true;
-      c.lock.setAlpha(0);
-      drawChest(c.g,c.x,c.y,c.w,c.h,true);
-
-      const mul = pickChestMultiplier(i);
-
-      // показать xN
-      const txt = s.add.text(c.x+c.w/2, c.y-10, `x${mul}`, {
-        fontFamily:"monospace",
-        fontSize:"16px",
-        color:"#0b0b0b",
-        fontStyle:"bold",
-        backgroundColor:"rgba(255,255,255,.65)",
-        padding:{left:6,right:6,top:2,bottom:2}
-      }).setOrigin(0.5);
-
-      // “подпрыгивание”
-      s.tweens.add({targets:txt, y:txt.y-10, duration:180, yoyo:true});
-
-      pixelBurst(c.x+c.w/2, c.y+8, 0xffd34a);
-
-      // применяем множитель (как в видео: мульты на сундуках)
-      current = current * mul;
-
-      // плавно докрутить сумму
-      updateSlab(current);
-
-      await wait(420);
-      s.tweens.add({targets:txt, alpha:0, duration:520, delay:400, onComplete:()=>txt.destroy()});
-    }
-
-    // финальное “красивое” округление под контент
-    const nice = makeNice(current);
-    updateSlab(nice);
-
-    await wait(500);
-  }
-
-  function pickChestMultiplier(i){
-    // “хорошие множители” (по просьбе)
-    // На видео часто x2/x2/x2… но можно давать и выше.
-    if(ALWAYS_GOOD_CHESTS){
-      // чуть чаще x2/x3, иногда x5/x10/x20
-      return pickWeighted([2,2,2,3,3,5,10,20], [22,22,18,14,12,8,3,1]);
-    }
-    return pickWeighted([2,3,5,8,10], [50,25,15,7,3]);
-  }
-
-  // ====== helpers / drawing ======
-  function drawFrame(x,y,w,h){
-    const g = s.add.graphics();
-    g.fillStyle(0xd6d6d6,1);
-    g.fillRect(x,y,w,h);
-    g.lineStyle(3, 0x6b6b6b, 1);
-    g.strokeRect(x,y,w,h);
-    g.lineStyle(1, 0xffffff, 0.35);
-    g.strokeRect(x+2,y+2,w-4,h-4);
-  }
-
-  function drawSky(scene){
-    const bg = scene.add.graphics();
+  // =========================
+  // EFFECTS / DRAW
+  // =========================
+  function drawSky(){
+    const bg = s.add.graphics();
     bg.fillStyle(0x6cc8ff,1);
     bg.fillRect(0,0,W,H);
 
     for(let i=0;i<8;i++){
-      drawCloud(rndi(10,W-70), rndi(10,170), rndi(20,34));
+      drawCloud(rndi(10,W-70), rndi(10,150), rndi(20,34));
     }
 
-    const g = scene.add.graphics();
+    const g = s.add.graphics();
     g.fillStyle(0x56c83f,1);
-    g.fillRect(0, H-30, W, 10);
+    g.fillRect(0, GAME_H-18, W, 8);
     g.fillStyle(0xb4723a,1);
-    g.fillRect(0, H-20, W, 20);
+    g.fillRect(0, GAME_H-10, W, 10);
     g.fillStyle(0x000000,0.12);
-    g.fillRect(0, H-30, W, 30);
+    g.fillRect(0, GAME_H-18, W, 18);
   }
 
   function drawCloud(x,y,size){
@@ -645,11 +636,20 @@
     g.fillRect(x, y+size/2-2, size+16, 3);
   }
 
-  function makePixelButton(x,y,w,h,text,onClick){
+  function drawFrame(x,y,w,h){
+    const g = s.add.graphics();
+    g.fillStyle(0xd6d6d6,1);
+    g.fillRect(x,y,w,h);
+    g.lineStyle(3, 0x6b6b6b, 1);
+    g.strokeRect(x,y,w,h);
+    g.lineStyle(1, 0xffffff, 0.35);
+    g.strokeRect(x+2,y+2,w-4,h-4);
+  }
+
+  function makeBtn(x,y,w,h,text,onClick){
     const c = s.add.container(x,y);
     const g = s.add.graphics();
-
-    const draw = (pressed=false) => {
+    const draw = (pressed=false)=>{
       g.clear();
       g.fillStyle(0xb7b7b7, 1);
       g.fillRect(-w/2, -h/2, w, h);
@@ -660,13 +660,12 @@
       g.lineStyle(2, 0x3a3a3a, 1);
       g.strokeRect(-w/2, -h/2, w, h);
       if(pressed){
-        g.fillStyle(0x000000, 0.08);
+        g.fillStyle(0x000000, 0.10);
         g.fillRect(-w/2, -h/2, w, h);
       }
     };
     draw(false);
-
-    const t = s.add.text(0,0,text,{fontFamily:"monospace",fontSize:"16px",color:"#101010",fontStyle:"bold"}).setOrigin(0.5);
+    const t = s.add.text(0,0,text,{fontFamily:"monospace",fontSize:"14px",color:"#101010",fontStyle:"bold"}).setOrigin(0.5);
     c.add([g,t]);
     c.setSize(w,h);
     c.setInteractive(new Phaser.Geom.Rectangle(-w/2,-h/2,w,h), Phaser.Geom.Rectangle.Contains);
@@ -680,8 +679,7 @@
       const dx = rnd(-30,30);
       const dy = rnd(-30,30);
       s.tweens.add({
-        targets:p,
-        x:x+dx, y:y+dy,
+        targets:p, x:x+dx, y:y+dy,
         alpha:{from:1,to:0},
         duration:260,
         onComplete:()=>p.destroy()
@@ -696,26 +694,9 @@
     s.tweens.add({targets:g, alpha:{from:0.45,to:0.1}, duration:500, yoyo:true, repeat:2, onComplete:()=>g.destroy()});
   }
 
-  function fmtMoney(v){
-    if(!DECIMALS){
-      return String(Math.floor(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-    }
-    // 2 знака как "327.00"
-    const fixed = (Math.round(v*100)/100).toFixed(2);
-    // без валюты
-    return fixed;
-  }
-
-  function makeNice(v){
-    // “красивое” число: слегка подгоняем к .00 и приятному диапазону
-    let x = Math.max(0, v);
-    // поднимем до "красивого" десятка/сотни
-    const step = x < 100 ? 1 : x < 1000 ? 5 : x < 10000 ? 10 : 25;
-    x = Math.ceil(x/step)*step;
-    // и .00
-    return DECIMALS ? Math.round(x*100)/100 : Math.round(x);
-  }
-
+  // =========================
+  // UTILS
+  // =========================
   function wait(ms){ return new Promise(r=>s.time.delayedCall(ms,r)); }
   function rnd(a,b){ return a + Math.random()*(b-a); }
   function rndi(a,b){ return Math.floor(rnd(a,b)); }
@@ -729,6 +710,18 @@
       if(r<=0) return values[i];
     }
     return values[values.length-1];
+  }
+
+  function fmt(v){
+    const x = Math.max(0, v);
+    return x.toFixed(DECIMALS); // точка всегда
+  }
+
+  function makeNice(v){
+    let x = Math.max(0, v);
+    const step = x < 10 ? 0.1 : x < 100 ? 0.5 : x < 1000 ? 1 : x < 10000 ? 5 : 10;
+    x = Math.ceil(x/step)*step;
+    return Number(x.toFixed(DECIMALS));
   }
 
 })();
