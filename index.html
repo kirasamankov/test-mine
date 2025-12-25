@@ -3,636 +3,71 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>MineDrop Content Simulator</title>
+  <title>Pixel MineDrop (Content)</title>
   <style>
-    html, body { margin:0; padding:0; background:#0b0f14; height:100%; overflow:hidden; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
-    #wrap { width:100%; height:100%; display:flex; align-items:center; justify-content:center; }
-    canvas { touch-action:none; }
-    .hint {
-      position: fixed; left: 12px; right: 12px; bottom: 12px;
-      color: rgba(255,255,255,.75); font-size: 12px; line-height: 1.35;
-      background: rgba(0,0,0,.25); border: 1px solid rgba(255,255,255,.08);
-      padding: 10px 12px; border-radius: 14px;
-      backdrop-filter: blur(10px);
-      max-width: 560px; margin: 0 auto;
+    html,body{height:100%;margin:0;background:#6cc8ff;overflow:hidden;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    #wrap{height:100%;display:flex;align-items:center;justify-content:center;padding:10px}
+    canvas{
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      border-radius:18px;
+      box-shadow:0 30px 90px rgba(0,0,0,.35);
+      outline: 2px solid rgba(0,0,0,.25);
+      background:#6cc8ff;
     }
-    .hint b { color: #fff; }
   </style>
 
-  <!-- Phaser 3 через CDN -->
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
-
-  <!-- PWA (необязательно, но удобно) -->
   <link rel="manifest" href="manifest.webmanifest">
-  <meta name="theme-color" content="#0b0f14">
+  <meta name="theme-color" content="#6cc8ff">
 </head>
 <body>
 <div id="wrap"></div>
-<div class="hint">
-  <b>Контент-режим:</b> никаких денег, только красивые выигрыши. <br/>
-  <b>Совет:</b> включи запись экрана → нажимай <b>SPIN</b> или <b>JACKPOT</b>.
-</div>
 
 <script>
 (() => {
-  // ---------- Настройки "всегда большие выигрыши" ----------
-  const ALWAYS_BIG_WINS = true;     // главный переключатель
-  const ALWAYS_BONUS = true;        // бонус почти каждый спин
-  const FORCE_HUGE_CHEST = true;    // гарант жирного сундука в конце бонуса
+  // ====== НАСТРОЙКИ КОНТЕНТА ======
+  const ALWAYS_BIG = true;          // всегда жирный итог
+  const CHESTS_ALWAYS_GOOD = true;  // сундуки чаще дают большие множители
+  const CURRENCY = "₽";             // "₽" или "$" или "" (пусто)
+  const BET = 100;                  // фейковая ставка
 
-  // "валюта" для контента
-  const CURRENCY = "COINS";
+  // Разрешение "в пикселях" (Phaser потом растянет FIT-ом)
+  // Так будет четкая пиксельная картинка как на твоем примере.
+  const W = 360;
+  const H = 640;
 
-  // ---------- Утилиты ----------
-  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const rnd = (a, b) => a + Math.random() * (b - a);
-  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-
-  // ---------- Размер 9:16 с адаптацией под экран ----------
-  const BASE_W = 540;
-  const BASE_H = 960;
-
-  const config = {
+  const cfg = {
     type: Phaser.AUTO,
-    parent: 'wrap',
-    width: BASE_W,
-    height: BASE_H,
-    backgroundColor: '#0b0f14',
-    scale: {
-      mode: Phaser.Scale.FIT,
-      autoCenter: Phaser.Scale.CENTER_BOTH,
-    },
-    scene: [MainScene],
+    parent: "wrap",
+    width: W,
+    height: H,
+    backgroundColor: "#6cc8ff",
+    pixelArt: true,
+    scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+    scene: { preload, create, update }
   };
 
-  new Phaser.Game(config);
-
-  function MainScene() {
-    Phaser.Scene.call(this, { key: 'MainScene' });
-  }
-  MainScene.prototype = Object.create(Phaser.Scene.prototype);
-  MainScene.prototype.constructor = MainScene;
-
-  MainScene.prototype.create = function() {
-    const s = this;
-
-    // ---------- UI фон ----------
-    const bg = s.add.rectangle(BASE_W/2, BASE_H/2, BASE_W, BASE_H, 0x0b0f14);
-    const vign = s.add.graphics();
-    vign.fillStyle(0x000000, 0.35);
-    vign.fillRect(0,0,BASE_W,BASE_H);
-
-    // заголовок
-    s.title = s.add.text(BASE_W/2, 18, "Minedrop • Content Simulator", {
-      fontSize: '18px', color: '#d8e7ff', fontStyle: '600'
-    }).setOrigin(0.5,0);
-
-    // панель WIN
-    s.winLabel = s.add.text(BASE_W/2, 52, "WIN", { fontSize:'14px', color:'#9bb7ff' }).setOrigin(0.5,0.5);
-    s.winText = s.add.text(BASE_W/2, 78, "0 " + CURRENCY, { fontSize:'38px', color:'#ffffff', fontStyle:'800' }).setOrigin(0.5,0.5);
-
-    // ставка (фейковая)
-    s.bet = 100;
-    s.betText = s.add.text(14, 60, "BET: " + s.bet, { fontSize:'14px', color:'#b8c7de' }).setOrigin(0,0.5);
-
-    // режим
-    s.mode = 'HOT';
-    s.modeText = s.add.text(BASE_W-14, 60, "MODE: " + s.mode, { fontSize:'14px', color:'#b8c7de' }).setOrigin(1,0.5);
-
-    // ---------- Зоны игры ----------
-    s.topArea = { x: 30, y: 120, w: BASE_W-60, h: 210 }; // 5x3
-    s.gridArea = { x: 30, y: 350, w: BASE_W-60, h: 470 }; // 5x6
-    s.bottomAreaY = 845;
-
-    // рамки
-    drawPanel(s, s.topArea.x, s.topArea.y, s.topArea.w, s.topArea.h, 0x0f1722);
-    drawPanel(s, s.gridArea.x, s.gridArea.y, s.gridArea.w, s.gridArea.h, 0x0f1722);
-
-    s.add.text(30, 105, "SPIN (5×3)", { fontSize:'12px', color:'#7d94b8' });
-    s.add.text(30, 335, "BLOCKS (5×6)", { fontSize:'12px', color:'#7d94b8' });
-
-    // ---------- Кнопки ----------
-    s.btnSpin = makeButton(s, BASE_W/2, s.bottomAreaY, 230, 56, "SPIN", () => startRound(s, "spin"));
-    s.btnBonus = makeButton(s, 110, s.bottomAreaY, 170, 50, "BONUS NOW", () => startRound(s, "bonus"));
-    s.btnJackpot = makeButton(s, BASE_W-110, s.bottomAreaY, 170, 50, "JACKPOT", () => startRound(s, "jackpot"));
-
-    // ---------- Создаём поле ----------
-    s.topCells = createTopCells(s);
-    s.blocks = createBlocks(s);
-
-    // состояние
-    s.isPlaying = false;
-    s.totalWin = 0;
-    s.displayWin = 0;
-
-    // подсказка “тап для звука” (мобилки)
-    s.soundHint = s.add.text(BASE_W/2, BASE_H-18, "Если нет звука — тапни по экрану один раз", {
-      fontSize:'12px', color:'rgba(255,255,255,.45)'
-    }).setOrigin(0.5,1);
-
-    s.input.once('pointerdown', () => { s.soundHint.setVisible(false); });
-
-    // стартовый “красивый экран”
-    idlePopulate(s);
-  };
-
-  function drawPanel(scene, x, y, w, h, fill) {
-    const g = scene.add.graphics();
-    g.fillStyle(fill, 1);
-    g.fillRoundedRect(x, y, w, h, 18);
-    g.lineStyle(2, 0x1a2a40, 1);
-    g.strokeRoundedRect(x, y, w, h, 18);
-    return g;
-  }
-
-  function makeButton(scene, x, y, w, h, label, onClick) {
-    const container = scene.add.container(x, y);
-    const bg = scene.add.rectangle(0,0,w,h, 0x122033).setOrigin(0.5);
-    bg.setStrokeStyle(2, 0x2a4b79, 1);
-    bg.setRadius?.(16);
-
-    const t = scene.add.text(0,0,label, { fontSize:'16px', color:'#ffffff', fontStyle:'800' }).setOrigin(0.5);
-
-    const glow = scene.add.rectangle(0,0,w-8,h-8, 0x2a8cff, 0.10).setOrigin(0.5);
-    glow.setVisible(false);
-
-    container.add([bg, glow, t]);
-    container.setSize(w,h);
-    container.setInteractive(new Phaser.Geom.Rectangle(-w/2,-h/2,w,h), Phaser.Geom.Rectangle.Contains);
-
-    container.on('pointerover', () => glow.setVisible(true));
-    container.on('pointerout', () => glow.setVisible(false));
-    container.on('pointerdown', () => {
-      scene.tweens.add({ targets: container, scaleX: 0.98, scaleY: 0.98, duration: 70, yoyo: true });
-      onClick();
-    });
-
-    return { container, bg, t, setEnabled: (v) => container.disableInteractive(!v) };
-  }
-
-  function createTopCells(scene) {
-    const cells = [];
-    const cols = 5, rows = 3;
-    const pad = 10;
-    const cw = (scene.topArea.w - pad*(cols+1)) / cols;
-    const ch = (scene.topArea.h - pad*(rows+1)) / rows;
-
-    for (let r=0;r<rows;r++) for (let c=0;c<cols;c++) {
-      const x = scene.topArea.x + pad + c*(cw+pad) + cw/2;
-      const y = scene.topArea.y + pad + r*(ch+pad) + ch/2;
-
-      const box = scene.add.rectangle(x,y,cw,ch, 0x0b111a);
-      box.setStrokeStyle(2, 0x1f3350, 1);
-      const txt = scene.add.text(x,y,"", { fontSize:'16px', color:'#d8e7ff', fontStyle:'800' }).setOrigin(0.5);
-      const sub = scene.add.text(x,y+18,"", { fontSize:'11px', color:'rgba(255,255,255,.55)' }).setOrigin(0.5);
-
-      cells.push({ c, r, x, y, w:cw, h:ch, box, txt, sub, symbol:"none" });
-    }
-    return cells;
-  }
-
-  function createBlocks(scene) {
-    const blocks = [];
-    const cols = 5, rows = 6;
-    const pad = 10;
-    const bw = (scene.gridArea.w - pad*(cols+1)) / cols;
-    const bh = (scene.gridArea.h - pad*(rows+1)) / rows;
-
-    for (let r=0;r<rows;r++) for (let c=0;c<cols;c++) {
-      const x = scene.gridArea.x + pad + c*(bw+pad) + bw/2;
-      const y = scene.gridArea.y + pad + r*(bh+pad) + bh/2;
-
-      const rect = scene.add.rectangle(x,y,bw,bh, 0x0b111a);
-      rect.setStrokeStyle(2, 0x1f3350, 1);
-
-      const t1 = scene.add.text(x, y-10, "", { fontSize:'14px', color:'#ffffff', fontStyle:'800' }).setOrigin(0.5);
-      const t2 = scene.add.text(x, y+14, "", { fontSize:'12px', color:'rgba(255,255,255,.7)' }).setOrigin(0.5);
-
-      blocks.push({
-        c,r,x,y,w:bw,h:bh,
-        rect, t1, t2,
-        type:"stone",
-        hp:2, hpMax:2,
-        mul:0.1,
-        alive:true
-      });
-    }
-    // генерим начальную сетку
-    resetBlocks(scene, blocks, 'hot');
-    return blocks;
-  }
-
-  function resetBlocks(scene, blocks, mode) {
-    // Свои типы блоков (не копия), но похоже по ощущению
-    // mul — множитель к ставке (фейк)
-    const pool = (mode === 'jackpot')
-      ? [
-          {t:"DIAMOND", hp:4, mul:8},
-          {t:"GOLD",    hp:3, mul:5},
-          {t:"RUBY",    hp:3, mul:3},
-          {t:"STONE",   hp:2, mul:1},
-          {t:"DUST",    hp:1, mul:0},
-        ]
-      : (mode === 'hot')
-      ? [
-          {t:"GOLD",    hp:3, mul:5},
-          {t:"RUBY",    hp:3, mul:3},
-          {t:"STONE",   hp:2, mul:1},
-          {t:"DUST",    hp:1, mul:0},
-          {t:"DIAMOND", hp:4, mul:8},
-        ]
-      : [
-          {t:"STONE",   hp:2, mul:1},
-          {t:"DUST",    hp:1, mul:0},
-          {t:"RUBY",    hp:3, mul:3},
-          {t:"GOLD",    hp:3, mul:5},
-          {t:"DIAMOND", hp:4, mul:8},
-        ];
-
-    blocks.forEach(b => {
-      const chosen = weightedPick(pool, [32, 28, 18, 12, 10]); // HOT-ish
-      b.type = chosen.t;
-      b.hp = chosen.hp;
-      b.hpMax = chosen.hp;
-      b.mul = chosen.mul;
-      b.alive = true;
-      b.rect.setFillStyle(0x0b111a, 1);
-      b.rect.setStrokeStyle(2, 0x1f3350, 1);
-      b.t1.setText(b.type);
-      b.t2.setText(`HP ${b.hp} • ${b.mul}x`);
-      b.t1.setAlpha(1);
-      b.t2.setAlpha(1);
-      b.rect.setAlpha(1);
-      b.rect.setScale(1);
-    });
-  }
-
-  function weightedPick(items, weights) {
-    const total = weights.reduce((a,b)=>a+b,0);
-    let r = Math.random() * total;
-    for (let i=0;i<items.length;i++) {
-      r -= weights[i];
-      if (r <= 0) return items[i];
-    }
-    return items[items.length-1];
-  }
-
-  function idlePopulate(scene) {
-    // чтобы на старте что-то было
-    scene.topCells.forEach(cell => {
-      const sym = pick(["WOOD","STONE","GOLD","BOOK","TNT","EYE","NONE"]);
-      setTopCell(cell, sym);
-    });
-  }
-
-  function setTopCell(cell, sym) {
-    cell.symbol = sym;
-    cell.txt.setText(sym === "NONE" ? "" : sym);
-    let sub = "";
-    if (sym === "WOOD") sub = "hit +1";
-    if (sym === "STONE") sub = "hit +2";
-    if (sym === "GOLD") sub = "hit +3";
-    if (sym === "BOOK") sub = "upgrade";
-    if (sym === "TNT") sub = "boom";
-    if (sym === "EYE") sub = "bonus";
-    cell.sub.setText(sub);
-
-    // чуть меняем обводку для “неона”
-    const stroke = (sym === "EYE" || sym === "TNT" || sym === "BOOK") ? 0x2a8cff : 0x1f3350;
-    cell.box.setStrokeStyle(2, stroke, 1);
-  }
-
-  function startRound(scene, kind) {
-    if (scene.isPlaying) return;
-    scene.isPlaying = true;
-
-    scene.btnSpin.container.disableInteractive();
-    scene.btnBonus.container.disableInteractive();
-    scene.btnJackpot.container.disableInteractive();
-
-    // режим
-    let mode = 'hot';
-    if (kind === 'jackpot') mode = 'jackpot';
-    if (kind === 'bonus') mode = 'hot';
-    scene.mode = (mode === 'jackpot') ? 'JACKPOT' : 'HOT';
-    scene.modeText.setText("MODE: " + scene.mode);
-
-    // сброс выигрыша на раунд
-    scene.roundWin = 0;
-
-    // обновим сетку (в jackpot делаем пожирнее)
-    resetBlocks(scene, scene.blocks, mode);
-
-    // “спин” сверху
-    spinTop(scene, kind, mode)
-      .then(result => applyTopToBlocks(scene, result, mode))
-      .then(() => maybeBonus(scene, kind, mode))
-      .then(() => finishRound(scene))
-      .catch(() => finishRound(scene));
-  }
-
-  function spinTop(scene, kind, mode) {
-    return new Promise(resolve => {
-      const cells = scene.topCells;
-
-      // анимация “перемешивания”
-      const duration = 650;
-      const start = scene.time.now;
-
-      const spinTimer = scene.time.addEvent({
-        delay: 60,
-        loop: true,
-        callback: () => {
-          cells.forEach(cell => {
-            setTopCell(cell, pick(["WOOD","STONE","GOLD","BOOK","TNT","EYE","NONE","NONE"]));
-          });
-          if (scene.time.now - start >= duration) {
-            spinTimer.remove(false);
-
-            // финальный результат: ВЕЗДЕ "большие выигрыши"
-            // делаем много ударов, часто бонус
-            const final = [];
-            for (let r=0;r<3;r++) {
-              final[r] = [];
-              for (let c=0;c<5;c++) {
-                let sym;
-                if (kind === 'jackpot') {
-                  sym = pick(["GOLD","GOLD","STONE","TNT","BOOK","EYE"]);
-                } else {
-                  sym = pick(["WOOD","STONE","GOLD","BOOK","TNT","EYE","NONE"]);
-                }
-
-                // гарантируем бонус почти всегда
-                if (ALWAYS_BIG_WINS && ALWAYS_BONUS && r === 2 && c === 3) sym = "EYE";
-
-                // усиливаем удары
-                if (ALWAYS_BIG_WINS && (r === 0 && c === 0)) sym = "GOLD";
-                if (ALWAYS_BIG_WINS && (r === 1 && c === 1)) sym = "BOOK";
-                if (ALWAYS_BIG_WINS && (r === 0 && c === 2)) sym = "TNT";
-
-                final[r][c] = sym;
-              }
-            }
-
-            // применяем на клетки
-            cells.forEach(cell => {
-              const sym = final[cell.r][cell.c];
-              setTopCell(cell, sym);
-            });
-
-            resolve({ top: final });
-          }
-        }
-      });
-    });
-  }
-
-  function applyTopToBlocks(scene, result, mode) {
-    return new Promise(resolve => {
-      // считаем “удары” по колонкам по 5x3
-      const top = result.top; // [3][5]
-      const colHits = [0,0,0,0,0];
-      let hasEye = false;
-      let hasBook = false;
-      let hasTnt = false;
-
-      for (let r=0;r<3;r++) for (let c=0;c<5;c++) {
-        const sym = top[r][c];
-        if (sym === "WOOD") colHits[c] += 1;
-        if (sym === "STONE") colHits[c] += 2;
-        if (sym === "GOLD") colHits[c] += 3;
-        if (sym === "EYE") hasEye = true;
-        if (sym === "BOOK") hasBook = true;
-        if (sym === "TNT") hasTnt = true;
-      }
-
-      // BOOK усиливает один случайный столбик
-      if (hasBook) {
-        const cc = Math.floor(rnd(0,5));
-        colHits[cc] += 4; // "апгрейд"
-        popText(scene, scene.topArea.x + 20 + cc*(scene.topArea.w/5), scene.topArea.y + 30, "UPGRADE!", 0x2a8cff);
-      }
-
-      // TNT — взрыв по центру (контентно)
-      if (hasTnt) {
-        explode(scene, 2, 3, 1); // центр + соседи
-      }
-
-      // Пробиваем блоки сверху вниз по колонкам
-      const blocks = scene.blocks;
-      const rows = 6, cols = 5;
-
-      let t = 0;
-      for (let c=0;c<cols;c++) {
-        let hits = colHits[c];
-        for (let r=0;r<rows;r++) {
-          if (hits <= 0) break;
-          const b = blocks.find(x => x.c===c && x.r===r);
-          if (!b || !b.alive) continue;
-
-          // удар
-          const dmg = Math.min(hits, 1);
-          hits -= dmg;
-
-          schedule(() => hitBlock(scene, b, 1), t);
-          t += 70;
-        }
-      }
-
-      // ждём пока отыграет
-      schedule(() => {
-        resolve({ hasEye });
-      }, t + 350);
-
-      function schedule(fn, delay) {
-        scene.time.addEvent({ delay, callback: fn });
-      }
-    });
-  }
-
-  function hitBlock(scene, b, dmg) {
-    if (!b.alive) return;
-    b.hp -= dmg;
-
-    // микро-тряска/флэш
-    scene.tweens.add({ targets: [b.rect, b.t1, b.t2], scaleX: 1.03, scaleY: 1.03, duration: 70, yoyo: true });
-    b.rect.setStrokeStyle(2, 0x2a8cff, 1);
-    scene.time.addEvent({ delay: 120, callback: ()=> b.rect.setStrokeStyle(2, 0x1f3350, 1) });
-
-    if (b.hp <= 0) {
-      breakBlock(scene, b);
-    } else {
-      b.t2.setText(`HP ${b.hp} • ${b.mul}x`);
-    }
-  }
-
-  function breakBlock(scene, b) {
-    b.alive = false;
-
-    // выигрыш: bet * mul (фейковый)
-    const add = Math.round(scene.bet * b.mul);
-    addWin(scene, add);
-
-    popText(scene, b.x, b.y, `+${add}`, 0xffffff);
-
-    // анимация исчезновения
-    scene.tweens.add({
-      targets: [b.rect, b.t1, b.t2],
-      alpha: 0,
-      scaleX: 0.92,
-      scaleY: 0.92,
-      duration: 220,
-      ease: 'Quad.easeOut'
-    });
-  }
-
-  function explode(scene, cx, cy, radius) {
-    // взрыв по блокам (cx,cy) в координатах сетки
-    const blocks = scene.blocks;
-    for (let r=cy-radius; r<=cy+radius; r++) {
-      for (let c=cx-radius; c<=cx+radius; c++) {
-        const b = blocks.find(x => x.c===c && x.r===r);
-        if (b && b.alive) {
-          hitBlock(scene, b, 99);
-        }
-      }
-    }
-    popText(scene, BASE_W/2, scene.gridArea.y + 40, "TNT!", 0x2a8cff);
-    shake(scene, 220);
-  }
-
-  function shake(scene, dur) {
-    const cam = scene.cameras.main;
-    cam.shake(dur, 0.006);
-  }
-
-  function maybeBonus(scene, kind, mode) {
-    return new Promise(resolve => {
-      // в контент-режиме бонус почти всегда
-      const trigger = (kind === 'bonus') || (kind === 'jackpot') || ALWAYS_BONUS;
-
-      if (!trigger) return resolve();
-
-      // красивое объявление
-      popText(scene, BASE_W/2, scene.gridArea.y - 12, "BONUS GAME!", 0xffffff);
-      shake(scene, 260);
-
-      // 4 free spins сундуков
-      const freeSpins = 4;
-      let i = 0;
-
-      const runOne = () => {
-        if (i >= freeSpins) return resolve();
-
-        i++;
-        // сундук → множитель
-        let mul;
-        if (FORCE_HUGE_CHEST && i === freeSpins) mul = 25; // жирный финал
-        else mul = pick([2,3,5,8,10,12]);
-
-        // “добавка”
-        const add = Math.round(scene.bet * mul * rnd(6, 14)); // жирнее, чем обычный блок
-        addWin(scene, add);
-
-        popText(scene, BASE_W/2, scene.gridArea.y + 120 + (i*12), `CHEST: ${mul}x`, 0xffffff);
-        shake(scene, 180);
-
-        scene.time.addEvent({ delay: 650, callback: runOne });
-      };
-
-      scene.time.addEvent({ delay: 600, callback: runOne });
-    });
-  }
-
-  function addWin(scene, add) {
-    scene.roundWin += add;
-    scene.totalWin += add;
-
-    // плавная анимация счётчика
-    const from = scene.displayWin;
-    const to = scene.displayWin + add;
-    scene.displayWin = to;
-
-    scene.tweens.addCounter({
-      from, to,
-      duration: 380,
-      ease: 'Quad.easeOut',
-      onUpdate: (tw) => {
-        const v = Math.floor(tw.getValue());
-        scene.winText.setText(v.toLocaleString('ru-RU') + " " + CURRENCY);
-      }
-    });
-  }
-
-  function finishRound(scene) {
-    // чуть “дотягиваем” до красивого числа
-    if (ALWAYS_BIG_WINS) {
-      const current = scene.displayWin;
-      const nice = makeNiceNumber(current);
-      const delta = nice - current;
-      if (delta > 0) addWin(scene, delta);
-    }
-
-    scene.time.addEvent({
-      delay: 450,
-      callback: () => {
-        scene.isPlaying = false;
-        scene.btnSpin.container.setInteractive();
-        scene.btnBonus.container.setInteractive();
-        scene.btnJackpot.container.setInteractive();
-      }
-    });
-  }
-
-  function makeNiceNumber(n) {
-    // делаем "красивое" число: заканчивается на 0/5/80/00 и т.д.
-    const targets = [0, 5, 10, 20, 50, 80, 100, 200, 500, 800, 1000];
-    const base = Math.max(1000, n);
-    const step = base < 20000 ? 10 : base < 100000 ? 50 : 100;
-    const rounded = Math.ceil(n / step) * step;
-    // небольшая “красота”
-    const tail = pick(targets);
-    const nice = rounded - (rounded % 1000) + (tail < 1000 ? tail : 0);
-    return Math.max(rounded, nice);
-  }
-
-  function popText(scene, x, y, txt, colorHex) {
-    const t = scene.add.text(x, y, txt, {
-      fontSize:'22px',
-      color:'#ffffff',
-      fontStyle:'900'
-    }).setOrigin(0.5);
-
-    t.setAlpha(0);
-    scene.tweens.add({
-      targets: t,
-      alpha: 1,
-      y: y - 10,
-      duration: 140,
-      ease: 'Quad.easeOut',
-      onComplete: () => {
-        scene.tweens.add({
-          targets: t,
-          alpha: 0,
-          y: y - 34,
-          duration: 520,
-          ease: 'Quad.easeIn',
-          delay: 180,
-          onComplete: () => t.destroy()
-        });
-      }
-    });
-  }
-})();
-</script>
-
-<!-- Manifest + service worker для установки на телефон (опционально) -->
-<script>
-  // Если нет файлов manifest/service worker — просто игнорируем.
-  // Для PWA лучше использовать https-хостинг (GitHub Pages / Netlify).
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(()=>{});
-  }
-</script>
-</body>
-</html>
+  new Phaser.Game(cfg);
+
+  // ====== ГЛОБАЛЬНОЕ ======
+  let s; // scene
+  let topCells = [];    // 5x3
+  let blocks = [];      // 5x6
+  let chests = [];      // 5
+  let startBtn;
+  let isRunning = false;
+
+  let win = 0;
+  let winDisplay = 0;
+
+  // layout
+  const TOP = { x: 24, y: 44, cols: 5, rows: 3, cw: 62, ch: 40, pad: 6 };
+  const GRID = { x: 36, y: 200, cols: 5, rows: 6, cw: 56, ch: 56, pad: 0 };
+  const CHEST_ROW_Y = 552;
+  const WINBAR_Y = 600;
+
+  // типы блоков (похожий набор как на скрине, но свои)
+  const BLOCK_TYPES = [
+    { key:"GRASS", hp:1, base:0x5fcf4a, accent:0x3ea536, mul:0 },
+    { key:"DIRT",  hp:1, ba
