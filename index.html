@@ -3,41 +3,75 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Block Bonus – Your Game</title>
+  <title>Block Bonus – Demo</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
 
   <style>
-    html,body{height:100%;margin:0;background:#79d0ff;overflow:hidden}
-    #wrap{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:10px}
+    :root{
+      --bg:#79d0ff;
+      --hud-bg:rgba(0,0,0,.55);
+    }
+    html,body{height:100%;margin:0;background:var(--bg);overflow:hidden}
+
+    /* ВАЖНО: центрируем всё железно */
+    body{
+      display:flex;
+      align-items:center;
+      justify-content:center;
+    }
+
+    /* Вертикальная компоновка: канвас + (опционально) панель */
+    #wrap{
+      width:min(540px, 98vw);
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      justify-content:center;
+      gap:10px;
+      padding:10px;
+      box-sizing:border-box;
+    }
+
+    /* Контейнер канваса */
+    #game{
+      width:100%;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+    }
+
     canvas{
+      display:block;
       image-rendering: pixelated;
       image-rendering: crisp-edges;
       border-radius: 22px;
       box-shadow: 0 30px 90px rgba(0,0,0,.35);
       outline: 2px solid rgba(0,0,0,.25);
-      background:#79d0ff;
+      background:var(--bg);
+      margin:0 !important;
     }
 
-    /* Панель управления — ВНЕ канваса (можно не захватывать в видео) */
+    /* Панель управления — ВНЕ канваса */
     #hud{
-      width:min(520px, 96vw);
+      width:100%;
       display:flex;
       align-items:center;
       justify-content:space-between;
       gap:10px;
-      background:rgba(0,0,0,.55);
+      background:var(--hud-bg);
       color:#fff;
       border-radius:14px;
       padding:10px 12px;
       font-family:"Press Start 2P", monospace;
       font-size:10px;
       user-select:none;
+      box-sizing:border-box;
     }
     #hud.hidden{display:none}
-    .grp{display:flex;align-items:center;gap:10px}
+    .grp{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
     button{
       font-family:"Press Start 2P", monospace;
       font-size:10px;
@@ -45,11 +79,15 @@
       border-radius:10px;
       border:0;
       cursor:pointer;
+      background:#e9e9e9;
+      color:#111;
     }
-    .btn{background:#e9e9e9;color:#111}
-    .btn:active{transform:translateY(1px)}
+    button:active{transform:translateY(1px)}
     input[type="range"]{width:220px}
-    .tiny{opacity:.8;font-size:8px}
+    .tiny{opacity:.85;font-size:8px}
+    @media (max-width:420px){
+      input[type="range"]{width:160px}
+    }
   </style>
 
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
@@ -61,9 +99,9 @@
 
   <div id="hud">
     <div class="grp">
-      <button id="start" class="btn">START</button>
-      <button id="rec" class="btn">REC</button>
-      <span class="tiny">Space=Start • R=REC</span>
+      <button id="start">START</button>
+      <button id="rec">REC</button>
+      <span class="tiny">Space/Enter=Start • R=REC • Long tap=REC</span>
     </div>
 
     <div class="grp">
@@ -76,17 +114,14 @@
 
 <script>
 (() => {
-  // ====== НАСТРОЙКИ (как в твоём видео) ======
+  // ====== НАСТРОЙКИ ======
   const W=360, H=640;
   const FREE_SPINS = 4;
 
-  // ставка 100..5000
   const BET_MIN=100, BET_MAX=5000, BET_STEP=100;
 
-  // сундуки: 5, открывается 3..5; если 3 — множители выше
   const CHESTS_TOTAL=5, OPEN_MIN=3, OPEN_MAX=5;
 
-  // тайминги максимально близко к твоему ощущению
   const REEL_SPIN_MS=650;
   const OVERLAY_MS=900;
   const BETWEEN_SPINS_MS=220;
@@ -95,31 +130,32 @@
 
   const DECIMALS=2;
 
-  // верхняя панель 5x3 по центру, как на твоём кадре
+  // ====== ВИЗУАЛ: собираем всё в “зону игры” (без пустоты) ======
+  // Верхняя панель по центру
   const TOP = { w:240, h:120, x:(W-240)/2, y:34, cols:5, rows:3 };
 
-  // башня и сундуки как в кадре
-  const TOWER = { colW:24, cell:24, cols:5, x:(W-(24*5))/2, baseY:432 };
-  const CHEST = { y:464, w:44, h:44, gap:6, startX:(W-(CHESTS_TOTAL*44+(CHESTS_TOTAL-1)*6))/2 };
-  const SLAB  = { x:(W-188)/2, y:520, w:188, h:26 };
+  // Башня поднята выше (чтобы не было “пусто”)
+  const TOWER = { colW:24, cell:24, cols:5, x:(W-(24*5))/2, baseY:410 };
 
-  // начальная форма блоков (ступеньками)
-  const START_HEIGHTS=[2,2,2,2,2]; // как в твоём кадре, короткая стопка
+  // Сундуки ближе к башне
+  const CHEST = { y:452, w:44, h:44, gap:6, startX:(W-(CHESTS_TOTAL*44+(CHESTS_TOTAL-1)*6))/2 };
 
-  // === КИРКИ с ударами (как в видео) ===
-  // дерево/камень/золото/алмаз + цифра
+  // Итоговая плашка выше (как в ролике), без огромного подвала
+  const SLAB  = { x:(W-188)/2, y:512, w:188, h:28 };
+
+  // Стартовая “форма” (короткая, как в твоём кадре)
+  const START_HEIGHTS=[3,2,3,2,3];
+
+  // ====== Кирки + книжка ======
   const PICKS=[
     {key:"WOOD",    hits:1, metal:0x9a9a9a},
     {key:"STONE",   hits:2, metal:0x7f8c8d},
     {key:"GOLD",    hits:3, metal:0xf1c40f},
     {key:"DIAMOND", hits:4, metal:0x4be7ff},
   ];
-
-  // книжка: апгрейд всех кирок в алмазные на этот спин
   const BOOK_CHANCE = 0.08;
   const EMPTY_CHANCE = 0.35;
 
-  // блоки (визуально как в кадре)
   const BLOCKS = {
     STONE: { key:"STONE", hp:1, pay:0.15, base:0xd8d8d8, speck:0xa7a7a7 },
     RED:   { key:"RED",   hp:1, pay:0.30, base:0xdedede, speck:0xc93a3a },
@@ -128,7 +164,7 @@
     OBSI:  { key:"OBSI",  hp:2, pay:1.50, base:0x1c1630, speck:0x2f2850 },
   };
 
-  // ====== Phaser (CANVAS — стабильнее) ======
+  // ====== Phaser (CANVAS) ======
   new Phaser.Game({
     type: Phaser.CANVAS,
     parent: "game",
@@ -136,11 +172,13 @@
     height: H,
     backgroundColor: "#79d0ff",
     pixelArt: true,
-    scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+    scale: {
+      mode: Phaser.Scale.FIT,
+      autoCenter: Phaser.Scale.CENTER_BOTH
+    },
     scene: { create, update }
   });
 
-  // ====== STATE ======
   let s;
   let running=false;
   let recMode=false;
@@ -153,6 +191,7 @@
   let blockSprites=[];
   let chests=[];
   let slabText, fsText, overlayC;
+
   let hudEl;
 
   function create(){
@@ -226,7 +265,7 @@
     hudEl.classList.toggle("hidden", recMode);
   }
 
-  // ============ FLOW (1-в-1 по механике) ============
+  // ===== FLOW =====
   async function startBonus(){
     if(running) return;
     running=true;
@@ -263,7 +302,7 @@
     if(hasBook){
       await bookFlash();
       for(let i=0;i<panel.length;i++){
-        if(panel[i] && panel[i].kind==="PICK") panel[i].pick = PICKS[3]; // diamond
+        if(panel[i] && panel[i].kind==="PICK") panel[i].pick = PICKS[3];
       }
       renderTopPanel(panel);
     }
@@ -314,7 +353,7 @@
       ? {v:[2,3,5,8,10,12,15,20,25], w:[18,16,16,14,12,10,8,4,2]}
       : {v:[2,2,3,3,5,5,8,10,12], w:[22,20,16,14,12,8,5,2,1]};
 
-    const order=[0,1,3,4,2]; // центр чаще закрыт
+    const order=[0,1,3,4,2];
     let opened=0;
     let cur=total;
 
@@ -349,7 +388,7 @@
     await wait(260);
   }
 
-  // ============ TOP PANEL ============
+  // ===== TOP PANEL =====
   function drawTopFrame(){
     const {x,y,w,h,cols,rows}=TOP;
     const g=s.add.graphics();
@@ -405,16 +444,11 @@
   function drawPick(hits, metal){
     const c=s.add.container(0,0);
     const g=s.add.graphics();
-
-    // handle
     g.fillStyle(0x8b5a2b,1); g.fillRect(-2,-10,4,22);
-    // head
     g.fillStyle(metal,1); g.fillRect(-12,-10,24,5);
-
     g.lineStyle(2,0x000000,0.30);
     g.strokeRect(-2,-10,4,22);
     g.strokeRect(-12,-10,24,5);
-
     const sh=pixelText(String(hits), 15,-11,10,"#000"); sh.setAlpha(0.55);
     const tx=pixelText(String(hits), 14,-12,10,"#fff");
     c.add([g,sh,tx]);
@@ -451,7 +485,7 @@
     });
   }
 
-  // ============ TOWER ============
+  // ===== TOWER =====
   function initTower(){
     cols=[];
     for(let c=0;c<TOWER.cols;c++){
@@ -466,9 +500,8 @@
   }
 
   function pickStartBlock(level){
-    // короткая стопка как у тебя: чаще золото/алмаз + немного обсидиана
-    if(level===0 && Math.random()<0.25) return BLOCKS.OBSI;
-    if(Math.random()<0.45) return BLOCKS.GOLD;
+    if(level===0 && Math.random()<0.20) return BLOCKS.OBSI;
+    if(Math.random()<0.50) return BLOCKS.GOLD;
     if(Math.random()<0.35) return BLOCKS.DIAM;
     return BLOCKS.OBSI;
   }
@@ -519,7 +552,7 @@
     return g;
   }
 
-  // ============ CHESTS ============
+  // ===== CHESTS =====
   function buildChests(){
     chests=[];
     for(let i=0;i<CHESTS_TOTAL;i++){
@@ -581,7 +614,7 @@
     burst(c.x+CHEST.w/2, c.y+8, 0xffd85a);
   }
 
-  // ============ SLAB / TEXT ============
+  // ===== SLAB / OVERLAY =====
   function drawSlab(){
     const g=s.add.graphics();
     g.fillStyle(0xbdbdbd,1); g.fillRect(SLAB.x,SLAB.y,SLAB.w,SLAB.h);
@@ -589,7 +622,7 @@
     g.fillStyle(0x000000,0.12); g.fillRect(SLAB.x+2, SLAB.y+SLAB.h-4, SLAB.w-4, 4);
 
     slabText = outlinedText("0.00", W/2, SLAB.y+SLAB.h/2+1, 14);
-    fsText = pixelText("", SLAB.x-48, SLAB.y-8, 10, "rgba(0,0,0,.55)");
+    fsText = pixelText("", SLAB.x-48, SLAB.y-10, 10, "rgba(0,0,0,.55)");
     fsText.setOrigin(0,1);
   }
 
@@ -605,28 +638,7 @@
     overlayC.hide=()=>{ s.tweens.add({targets:overlayC,alpha:0,duration:160,onComplete:()=>overlayC.setVisible(false)}); };
   }
 
-  function pixelText(str,x,y,size,color){
-    return s.add.text(x,y,String(str),{fontFamily:'"Press Start 2P", monospace',fontSize:`${size}px`,color});
-  }
-  function outlinedText(str,x,y,size){
-    const c=s.add.container(x,y);
-    const t=String(str);
-    const sh=s.add.text(2,2,t,{fontFamily:'"Press Start 2P", monospace',fontSize:`${size}px`,color:"#000"}).setOrigin(0.5);
-    sh.setAlpha(0.8);
-    const main=s.add.text(0,0,t,{fontFamily:'"Press Start 2P", monospace',fontSize:`${size}px`,color:"#fff"}).setOrigin(0.5);
-    main.setShadow(2,2,"rgba(0,0,0,.55)",0,true,true);
-    c.add([sh,main]);
-    c.setText=(v)=>{ const nv=String(v); sh.setText(nv); main.setText(nv); };
-    return c;
-  }
-
-  function floatWin(x,y,add){
-    const txt=outlinedText(fmt(add), x, y, 10);
-    txt.setDepth(400);
-    s.tweens.add({targets:txt, y:y-18, alpha:0, duration:700, onComplete:()=>txt.destroy()});
-  }
-
-  // ============ BACKGROUND ============
+  // ===== BACKGROUND =====
   function drawSky(){
     s.add.rectangle(W/2,H/2,W,H,0x79d0ff).setDepth(-50);
     for(let i=0;i<10;i++) cloud(rndi(10,W-70), rndi(20,220), rndi(22,40));
@@ -642,12 +654,31 @@
   }
   function drawGround(){
     const g=s.add.graphics().setDepth(-30);
-    g.fillStyle(0x5fd23f,1); g.fillRect(0,470,W,14);
-    g.fillStyle(0xb8743c,1); g.fillRect(0,484,W,160);
-    g.fillStyle(0x000000,0.08); g.fillRect(0,470,W,200);
+    g.fillStyle(0x5fd23f,1); g.fillRect(0,468,W,14);
+    g.fillStyle(0xb8743c,1); g.fillRect(0,482,W,158);
+    g.fillStyle(0x000000,0.08); g.fillRect(0,468,W,200);
   }
 
-  // ============ FX / MATH ============
+  // ===== FX / TEXT / UTILS =====
+  function pixelText(str,x,y,size,color){
+    return s.add.text(x,y,String(str),{fontFamily:'"Press Start 2P", monospace',fontSize:`${size}px`,color});
+  }
+  function outlinedText(str,x,y,size){
+    const c=s.add.container(x,y);
+    const t=String(str);
+    const sh=s.add.text(2,2,t,{fontFamily:'"Press Start 2P", monospace',fontSize:`${size}px`,color:"#000"}).setOrigin(0.5);
+    sh.setAlpha(0.8);
+    const main=s.add.text(0,0,t,{fontFamily:'"Press Start 2P", monospace',fontSize:`${size}px`,color:"#fff"}).setOrigin(0.5);
+    main.setShadow(2,2,"rgba(0,0,0,.55)",0,true,true);
+    c.add([sh,main]);
+    c.setText=(v)=>{ const nv=String(v); sh.setText(nv); main.setText(nv); };
+    return c;
+  }
+  function floatWin(x,y,add){
+    const txt=outlinedText(fmt(add), x, y, 10);
+    txt.setDepth(400);
+    s.tweens.add({targets:txt, y:y-18, alpha:0, duration:700, onComplete:()=>txt.destroy()});
+  }
   function burst(x,y,color){
     for(let i=0;i<10;i++){
       const p=s.add.rectangle(x,y,2,2,color,1).setDepth(300);
@@ -675,6 +706,7 @@
     for(let i=0;i<values.length;i++){ r-=weights[i]; if(r<=0) return values[i]; }
     return values[values.length-1];
   }
+
 })();
 </script>
 </body>
