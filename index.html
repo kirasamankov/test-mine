@@ -3,46 +3,17 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Block Bonus – Demo</title>
+  <title>Block Bonus — Layout</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
 
   <style>
-    :root{
-      --bg:#79d0ff;
-      --hud-bg:rgba(0,0,0,.55);
-    }
-    html,body{height:100%;margin:0;background:var(--bg);overflow:hidden}
-
-    /* ВАЖНО: центрируем всё железно */
-    body{
-      display:flex;
-      align-items:center;
-      justify-content:center;
-    }
-
-    /* Вертикальная компоновка: канвас + (опционально) панель */
-    #wrap{
-      width:min(540px, 98vw);
-      display:flex;
-      flex-direction:column;
-      align-items:center;
-      justify-content:center;
-      gap:10px;
-      padding:10px;
-      box-sizing:border-box;
-    }
-
-    /* Контейнер канваса */
-    #game{
-      width:100%;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-    }
-
+    html,body{height:100%;margin:0;background:#79d0ff;overflow:hidden}
+    body{display:flex;align-items:center;justify-content:center}
+    #wrap{width:min(540px,98vw);display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px;box-sizing:border-box}
+    #game{width:100%;display:flex;align-items:center;justify-content:center}
     canvas{
       display:block;
       image-rendering: pixelated;
@@ -50,18 +21,15 @@
       border-radius: 22px;
       box-shadow: 0 30px 90px rgba(0,0,0,.35);
       outline: 2px solid rgba(0,0,0,.25);
-      background:var(--bg);
-      margin:0 !important;
+      background:#79d0ff;
     }
-
-    /* Панель управления — ВНЕ канваса */
     #hud{
       width:100%;
       display:flex;
-      align-items:center;
       justify-content:space-between;
+      align-items:center;
       gap:10px;
-      background:var(--hud-bg);
+      background:rgba(0,0,0,.55);
       color:#fff;
       border-radius:14px;
       padding:10px 12px;
@@ -85,628 +53,312 @@
     button:active{transform:translateY(1px)}
     input[type="range"]{width:220px}
     .tiny{opacity:.85;font-size:8px}
-    @media (max-width:420px){
-      input[type="range"]{width:160px}
-    }
+    @media (max-width:420px){ input[type="range"]{width:160px} }
   </style>
 
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
 </head>
 
 <body>
-<div id="wrap">
-  <div id="game"></div>
+  <div id="wrap">
+    <div id="game"></div>
 
-  <div id="hud">
-    <div class="grp">
-      <button id="start">START</button>
-      <button id="rec">REC</button>
-      <span class="tiny">Space/Enter=Start • R=REC • Long tap=REC</span>
-    </div>
-
-    <div class="grp">
-      <span>BET</span>
-      <input id="bet" type="range" min="100" max="5000" step="100" value="1000" />
-      <span id="betVal">1000</span>
+    <!-- Панель ВНЕ кадра: можно не захватывать -->
+    <div id="hud">
+      <div class="grp">
+        <button id="start">START</button>
+        <button id="rec">REC</button>
+        <span class="tiny">Space/Enter=Start • R=REC</span>
+      </div>
+      <div class="grp">
+        <span>BET</span>
+        <input id="bet" type="range" min="100" max="5000" step="100" value="1000" />
+        <span id="betVal">1000</span>
+      </div>
     </div>
   </div>
-</div>
 
 <script>
 (() => {
-  // ====== НАСТРОЙКИ ======
-  const W=360, H=640;
-  const FREE_SPINS = 4;
+  // ===============================
+  // ЖЁСТКИЙ МАКЕТ: НЕ ЛОМАЕТСЯ
+  // ===============================
+  const W = 360, H = 640;
 
-  const BET_MIN=100, BET_MAX=5000, BET_STEP=100;
+  const COLS = 5;         // <- 5 В ШИРИНУ ВЕЗДЕ
+  const TOP_ROWS = 3;     // <- верхняя рамка 3 ряда
+  const MINE_ROWS = 6;    // <- шахта 6 рядов
+  const CELL = 48;        // 5*48=240 (ровно, красиво)
+  const GRID_W = COLS * CELL; // 240
+  const X0 = Math.floor((W - GRID_W) / 2); // 60
 
-  const CHESTS_TOTAL=5, OPEN_MIN=3, OPEN_MAX=5;
+  // Вертикальные позиции (строго)
+  const TOP_Y   = 20;                              // верхняя рамка
+  const TOP_H   = TOP_ROWS * CELL;                 // 144
+  const GAP_1   = 10;                              // зазор между рамкой и шахтой
+  const MINE_Y  = TOP_Y + TOP_H + GAP_1;           // сразу под рамкой
+  const MINE_H  = MINE_ROWS * CELL;                // 288
+  const GAP_2   = 10;                              // зазор между шахтой и сундуками
+  const CHEST_Y = MINE_Y + MINE_H + GAP_2;         // сразу под шахтой
+  const CHEST_W = 44, CHEST_H = 44;                // твой ассет
+  const SLAB_W  = 188, SLAB_H = 28;
+  const SLAB_Y  = CHEST_Y + CHEST_H + 12;          // сразу под сундуками
 
-  const REEL_SPIN_MS=650;
-  const OVERLAY_MS=900;
-  const BETWEEN_SPINS_MS=220;
-  const HIT_STEP_MS=95;
-  const CHEST_STEP_MS=420;
-
-  const DECIMALS=2;
-
-  // ====== ВИЗУАЛ: собираем всё в “зону игры” (без пустоты) ======
-  // Верхняя панель по центру
-  const TOP = { w:240, h:120, x:(W-240)/2, y:34, cols:5, rows:3 };
-
-  // Башня поднята выше (чтобы не было “пусто”)
-  const TOWER = { colW:24, cell:24, cols:5, x:(W-(24*5))/2, baseY:410 };
-
-  // Сундуки ближе к башне
-  const CHEST = { y:452, w:44, h:44, gap:6, startX:(W-(CHESTS_TOTAL*44+(CHESTS_TOTAL-1)*6))/2 };
-
-  // Итоговая плашка выше (как в ролике), без огромного подвала
-  const SLAB  = { x:(W-188)/2, y:512, w:188, h:28 };
-
-  // Стартовая “форма” (короткая, как в твоём кадре)
-  const START_HEIGHTS=[3,2,3,2,3];
-
-  // ====== Кирки + книжка ======
-  const PICKS=[
-    {key:"WOOD",    hits:1, metal:0x9a9a9a},
-    {key:"STONE",   hits:2, metal:0x7f8c8d},
-    {key:"GOLD",    hits:3, metal:0xf1c40f},
-    {key:"DIAMOND", hits:4, metal:0x4be7ff},
-  ];
-  const BOOK_CHANCE = 0.08;
-  const EMPTY_CHANCE = 0.35;
-
-  const BLOCKS = {
-    STONE: { key:"STONE", hp:1, pay:0.15, base:0xd8d8d8, speck:0xa7a7a7 },
-    RED:   { key:"RED",   hp:1, pay:0.30, base:0xdedede, speck:0xc93a3a },
-    DIAM:  { key:"DIAM",  hp:1, pay:0.70, base:0x57e9ff, speck:0x2fb9d2 },
-    GOLD:  { key:"GOLD",  hp:1, pay:0.55, base:0xffd85a, speck:0xeab021 },
-    OBSI:  { key:"OBSI",  hp:2, pay:1.50, base:0x1c1630, speck:0x2f2850 },
+  // Файлы ассетов
+  const ASSETS = {
+    panel: "assets/ui_panel.png",
+    chestClosed: "assets/chest_closed.png",
+    chestOpen: "assets/chest_open.png",
+    slab: "assets/slab.png",
+    grass: "assets/tile_grass.png",
+    dirt: "assets/tile_dirt.png",
+    iron: "assets/tile_iron.png",
   };
 
-  // ====== Phaser (CANVAS) ======
-  new Phaser.Game({
+  // UI state
+  let bet = 1000;
+  let recMode = false;
+  let total = 0;
+
+  const game = new Phaser.Game({
     type: Phaser.CANVAS,
     parent: "game",
     width: W,
     height: H,
     backgroundColor: "#79d0ff",
     pixelArt: true,
-    scale: {
-      mode: Phaser.Scale.FIT,
-      autoCenter: Phaser.Scale.CENTER_BOTH
-    },
-    scene: { create, update }
+    scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+    scene: { preload, create }
   });
 
-  let s;
-  let running=false;
-  let recMode=false;
-
-  let bet=1000;
-  let total=0, totalDisp=0;
-
-  let topCells=[];
-  let cols=[];
-  let blockSprites=[];
-  let chests=[];
-  let slabText, fsText, overlayC;
-
-  let hudEl;
+  function preload(){
+    // Загружаем, но даже если нет — будет fallback (через try-catch нельзя тут,
+    // просто проверим existence при create через textures.exists).
+    this.load.image("panel", ASSETS.panel);
+    this.load.image("chestC", ASSETS.chestClosed);
+    this.load.image("chestO", ASSETS.chestOpen);
+    this.load.image("slab", ASSETS.slab);
+    this.load.image("grass", ASSETS.grass);
+    this.load.image("dirt", ASSETS.dirt);
+    this.load.image("iron", ASSETS.iron);
+  }
 
   function create(){
-    s=this;
+    const s = this;
 
-    hudEl = document.getElementById("hud");
-    bindHUD();
+    bindHUD(s);
 
-    drawSky();
-    drawGround();
+    drawSky(s);
 
-    drawTopFrame();
-    buildTopCells();
+    // 1) ВЕРХНЯЯ РАМКА 5x3 (сетка видна всегда)
+    drawTopPanel(s);
 
-    initTower();
-    redrawTower();
+    // 2) ШАХТА 5x6 (сетка видна всегда)
+    drawMine(s);
 
-    buildChests();
-    drawSlab();
-    buildOverlay();
+    // 3) СУНДУКИ 5 штук, строго под шахтой (БЕЗ ЛИШНЕГО)
+    drawChests(s);
 
-    setTotal(0);
-    renderTopPanel(makeSpinPanel(true));
+    // 4) ПЛАШКА СЧЁТА (строго под сундуками)
+    drawSlab(s);
 
-    // controls
-    s.input.keyboard?.on("keydown-SPACE", ()=>startBonus());
-    s.input.keyboard?.on("keydown-ENTER", ()=>startBonus());
-    s.input.keyboard?.on("keydown-R", ()=>toggleREC());
+    // Управление
+    s.input.keyboard.on("keydown-SPACE", ()=>start());
+    s.input.keyboard.on("keydown-ENTER", ()=>start());
+    s.input.keyboard.on("keydown-R", ()=>toggleREC());
 
-    // mobile: tap=start, long press=REC
-    let pressTimer=null;
-    s.input.on("pointerdown", ()=>{
-      pressTimer = setTimeout(()=>toggleREC(), 450);
-    });
-    s.input.on("pointerup", ()=>{
-      if(pressTimer){
-        const t=pressTimer; pressTimer=null;
-        clearTimeout(t);
-        startBonus();
+    function start(){
+      // пока просто тест: увеличиваем сумму, чтобы видеть что работает
+      total += bet * 1.23;
+      updateSlabText(s);
+    }
+  }
+
+  // ===============================
+  // РЕНДЕР
+  // ===============================
+  function drawSky(s){
+    // фон+облака (можно заменить твоим фоном позже)
+    s.add.rectangle(W/2, H/2, W, H, 0x79d0ff).setDepth(-50);
+    for(let i=0;i<8;i++){
+      const x = rndi(0, W-80), y=rndi(40, 220), w=rndi(30, 60);
+      const g=s.add.graphics().setDepth(-40);
+      g.fillStyle(0xffffff,1);
+      g.fillRect(x,y,w,12);
+      g.fillRect(x+10,y-6,w,12);
+      g.fillRect(x+20,y+2,w,12);
+      g.fillStyle(0x000000,0.06);
+      g.fillRect(x,y+10,w+22,3);
+    }
+    // земля низ
+    const g=s.add.graphics().setDepth(-30);
+    g.fillStyle(0x5fd23f,1).fillRect(0, H-120, W, 14);
+    g.fillStyle(0xb8743c,1).fillRect(0, H-106, W, 140);
+  }
+
+  function drawTopPanel(s){
+    if (s.textures.exists("panel")) {
+      // если у тебя цельная рамка-ассет (5x3), просто рисуем
+      const img = s.add.image(X0 + GRID_W/2, TOP_Y + TOP_H/2, "panel");
+      img.setOrigin(0.5);
+      img.setScale(GRID_W / img.width, TOP_H / img.height);
+    } else {
+      // fallback: рисуем рамку и сетку
+      drawFrameWithGrid(s, X0, TOP_Y, GRID_W, TOP_H, COLS, TOP_ROWS);
+    }
+  }
+
+  function drawMine(s){
+    // фон шахты (тайлы), потом поверх сетка
+    for(let r=0;r<MINE_ROWS;r++){
+      for(let c=0;c<COLS;c++){
+        const x = X0 + c*CELL;
+        const y = MINE_Y + r*CELL;
+
+        // Пример слоёв (ты потом скажешь точные)
+        let tex = "dirt";
+        if (r === 0) tex = "grass";
+        if (r === 2) tex = "iron";
+
+        if (s.textures.exists(tex)) {
+          const img = s.add.image(x+CELL/2, y+CELL/2, tex);
+          img.setScale(CELL / img.width, CELL / img.height);
+        } else {
+          // fallback блок
+          const g=s.add.graphics();
+          g.fillStyle(0xcfcfcf,1).fillRect(x,y,CELL,CELL);
+        }
       }
-    });
+    }
+
+    // сетка всегда видна
+    drawGridLines(s, X0, MINE_Y, GRID_W, MINE_H, COLS, MINE_ROWS, 0x000000, 0.55, 2);
   }
 
-  function update(){
-    totalDisp += (total-totalDisp)*0.18;
-    if(Math.abs(total-totalDisp)<0.005) totalDisp=total;
-    slabText.setText(fmt(totalDisp));
+  function drawChests(s){
+    for(let i=0;i<COLS;i++){
+      // сундук должен стоять по центру каждой колонки
+      const cx = X0 + i*CELL + CELL/2;
+      const x  = cx - CHEST_W/2;
+      const y  = CHEST_Y;
+
+      if (s.textures.exists("chestC")) {
+        const img = s.add.image(x + CHEST_W/2, y + CHEST_H/2, "chestC");
+        img.setScale(CHEST_W / img.width, CHEST_H / img.height);
+      } else {
+        // fallback сундук
+        const g=s.add.graphics();
+        g.fillStyle(0xc9903a,1).fillRect(x,y,CHEST_W,CHEST_H);
+        g.lineStyle(2,0x000000,0.35).strokeRect(x,y,CHEST_W,CHEST_H);
+      }
+    }
   }
 
-  function bindHUD(){
-    const betRange=document.getElementById("bet");
-    const betVal=document.getElementById("betVal");
-    const startBtn=document.getElementById("start");
-    const recBtn=document.getElementById("rec");
+  let slabTextObj = null;
+  function drawSlab(s){
+    const x = Math.floor((W - SLAB_W)/2);
+    const y = SLAB_Y;
 
-    betRange.value=String(bet);
-    betVal.textContent=String(bet);
+    if (s.textures.exists("slab")) {
+      const img = s.add.image(x + SLAB_W/2, y + SLAB_H/2, "slab");
+      img.setScale(SLAB_W / img.width, SLAB_H / img.height);
+    } else {
+      const g=s.add.graphics();
+      g.fillStyle(0xbdbdbd,1).fillRect(x,y,SLAB_W,SLAB_H);
+      g.lineStyle(2,0x6b6b6b,1).strokeRect(x,y,SLAB_W,SLAB_H);
+    }
+
+    slabTextObj = outlinedText(s, "0.00", W/2, y + SLAB_H/2 + 1, 14);
+  }
+
+  function updateSlabText(s){
+    if(!slabTextObj) return;
+    slabTextObj.setText(total.toFixed(2));
+  }
+
+  // ===============================
+  // HUD / REC
+  // ===============================
+  function bindHUD(s){
+    const hudEl = document.getElementById("hud");
+    const betRange = document.getElementById("bet");
+    const betVal = document.getElementById("betVal");
+    const startBtn = document.getElementById("start");
+    const recBtn = document.getElementById("rec");
+
+    betRange.value = String(bet);
+    betVal.textContent = String(bet);
 
     betRange.addEventListener("input", ()=>{
-      bet = clamp(parseInt(betRange.value,10), BET_MIN, BET_MAX);
-      bet = Math.round(bet/BET_STEP)*BET_STEP;
-      betVal.textContent=String(bet);
+      bet = clamp(parseInt(betRange.value,10)||1000, 100, 5000);
+      bet = Math.round(bet/100)*100;
+      betVal.textContent = String(bet);
     });
 
-    startBtn.addEventListener("click", ()=>startBonus());
+    startBtn.addEventListener("click", ()=>{
+      total += bet * 1.23;
+      updateSlabText(s);
+    });
+
     recBtn.addEventListener("click", ()=>toggleREC());
-  }
 
-  function toggleREC(){
-    recMode=!recMode;
-    hudEl.classList.toggle("hidden", recMode);
-  }
-
-  // ===== FLOW =====
-  async function startBonus(){
-    if(running) return;
-    running=true;
-
-    setTotal(0);
-    resetChests();
-    initTower();
-    redrawTower();
-
-    overlayC.show();
-    await wait(OVERLAY_MS);
-    overlayC.hide();
-    await wait(220);
-
-    for(let i=0;i<FREE_SPINS;i++){
-      fsText.setText(`FREE SPIN ${i+1}/${FREE_SPINS}`);
-      await oneSpin();
-      await wait(BETWEEN_SPINS_MS);
-    }
-    fsText.setText("");
-
-    await chestPhase();
-
-    running=false;
-  }
-
-  async function oneSpin(){
-    await reelSpin();
-
-    const panel = makeSpinPanel(false);
-    renderTopPanel(panel);
-
-    const hasBook = panel.some(x=>x && x.kind==="BOOK");
-    if(hasBook){
-      await bookFlash();
-      for(let i=0;i<panel.length;i++){
-        if(panel[i] && panel[i].kind==="PICK") panel[i].pick = PICKS[3];
-      }
-      renderTopPanel(panel);
-    }
-
-    const hits = new Array(TOP.cols).fill(0);
-    panel.forEach((cell, idx)=>{
-      if(!cell) return;
-      const c = idx % TOP.cols;
-      if(cell.kind==="PICK") hits[c] += cell.pick.hits;
-    });
-
-    for(let c=0;c<TOP.cols;c++){
-      let left=hits[c];
-      while(left>0){
-        if(!hitTopBlock(c)) break;
-        left--;
-        await wait(HIT_STEP_MS);
-      }
-      redrawTower();
+    function toggleREC(){
+      recMode = !recMode;
+      hudEl.classList.toggle("hidden", recMode);
     }
   }
 
-  function hitTopBlock(col){
-    const stack=cols[col].blocks;
-    if(stack.length===0) return false;
-
-    const b=stack[stack.length-1];
-    b.hp -= 1;
-
-    const p=blockToWorld(col, stack.length-1);
-    burst(p.x+12,p.y+12,b.type.speck);
-
-    if(b.hp<=0){
-      stack.pop();
-      const add = bet * b.type.pay;
-      setTotal(total + add);
-      floatWin(p.x+12, p.y-6, add);
-    }
-    return true;
-  }
-
-  async function chestPhase(){
-    const openCount = rndi(OPEN_MIN, OPEN_MAX+1);
-
-    const pool = (openCount===3)
-      ? {v:[5,10,12,15,20,25,30,40,50], w:[6,14,14,14,14,12,10,8,8]}
-      : (openCount===4)
-      ? {v:[2,3,5,8,10,12,15,20,25], w:[18,16,16,14,12,10,8,4,2]}
-      : {v:[2,2,3,3,5,5,8,10,12], w:[22,20,16,14,12,8,5,2,1]};
-
-    const order=[0,1,3,4,2];
-    let opened=0;
-    let cur=total;
-
-    for(const idx of order){
-      if(opened>=openCount) break;
-      if(idx===2 && openCount<5 && Math.random()<0.75) continue;
-
-      const mul = pickW(pool.v, pool.w);
-      openChest(idx);
-      showMul(idx, mul);
-
-      cur = cur * mul;
-      setTotal(cur);
-
-      opened++;
-      await wait(CHEST_STEP_MS);
-    }
-
-    if(opened<openCount){
-      for(const idx of [0,4,1,3,2]){
-        if(opened>=openCount) break;
-        if(chests[idx].open) continue;
-        const mul = pickW(pool.v, pool.w);
-        openChest(idx); showMul(idx,mul);
-        cur = cur * mul; setTotal(cur);
-        opened++;
-        await wait(CHEST_STEP_MS);
-      }
-    }
-
-    setTotal(makeNice(cur));
-    await wait(260);
-  }
-
-  // ===== TOP PANEL =====
-  function drawTopFrame(){
-    const {x,y,w,h,cols,rows}=TOP;
+  // ===============================
+  // ПРИМИТИВЫ
+  // ===============================
+  function drawFrameWithGrid(s, x,y,w,h, cols,rows){
     const g=s.add.graphics();
-    g.fillStyle(0xbfc3c7,1); g.fillRect(x,y,w,h);
-    g.lineStyle(3,0x6b6b6b,1); g.strokeRect(x,y,w,h);
-    g.lineStyle(2,0x8d8d8d,1); g.strokeRect(x+2,y+2,w-4,h-4);
+    g.fillStyle(0xbfc3c7,1).fillRect(x,y,w,h);
+    g.lineStyle(3,0x6b6b6b,1).strokeRect(x,y,w,h);
+    g.lineStyle(2,0x8d8d8d,1).strokeRect(x+2,y+2,w-4,h-4);
 
-    const cw=Math.floor(w/cols), ch=Math.floor(h/rows);
-    g.lineStyle(2,0xffffff,0.9);
-    for(let c=1;c<cols;c++){ g.beginPath(); g.moveTo(x+c*cw,y+6); g.lineTo(x+c*cw,y+h-6); g.strokePath(); }
-    for(let r=1;r<rows;r++){ g.beginPath(); g.moveTo(x+6,y+r*ch); g.lineTo(x+w-6,y+r*ch); g.strokePath(); }
+    drawGridLines(s,x,y,w,h,cols,rows,0xffffff,0.9,2);
   }
 
-  function buildTopCells(){
-    topCells=[];
-    const {x,y,w,h,cols,rows}=TOP;
-    const cw=Math.floor(w/cols), ch=Math.floor(h/rows);
-    for(let r=0;r<rows;r++){
-      for(let c=0;c<cols;c++){
-        const cont=s.add.container(x+c*cw+cw/2, y+r*ch+ch/2);
-        topCells.push({r,c,cont});
-      }
-    }
-  }
-
-  function makeSpinPanel(forceSome){
-    const out=[];
-    for(let i=0;i<TOP.cols*TOP.rows;i++){
-      if(Math.random()<EMPTY_CHANCE){ out.push(null); continue; }
-      if(Math.random()<BOOK_CHANCE){ out.push({kind:"BOOK"}); continue; }
-      const pick=pickW([PICKS[0],PICKS[1],PICKS[2],PICKS[3]],[46,30,18,6]);
-      out.push({kind:"PICK", pick});
-    }
-    if(forceSome){
-      out[1]={kind:"PICK", pick:PICKS[0]};
-      out[2]={kind:"PICK", pick:PICKS[0]};
-      out[3]={kind:"PICK", pick:PICKS[2]};
-    }
-    return out;
-  }
-
-  function renderTopPanel(panel){
-    for(let i=0;i<topCells.length;i++){
-      const cell=topCells[i];
-      cell.cont.removeAll(true);
-      const item=panel[i];
-      if(!item) continue;
-      if(item.kind==="BOOK") cell.cont.add(drawBook());
-      else cell.cont.add(drawPick(item.pick.hits, item.pick.metal));
-    }
-  }
-
-  function drawPick(hits, metal){
-    const c=s.add.container(0,0);
+  function drawGridLines(s, x,y,w,h, cols,rows, color, alpha, thickness){
     const g=s.add.graphics();
-    g.fillStyle(0x8b5a2b,1); g.fillRect(-2,-10,4,22);
-    g.fillStyle(metal,1); g.fillRect(-12,-10,24,5);
-    g.lineStyle(2,0x000000,0.30);
-    g.strokeRect(-2,-10,4,22);
-    g.strokeRect(-12,-10,24,5);
-    const sh=pixelText(String(hits), 15,-11,10,"#000"); sh.setAlpha(0.55);
-    const tx=pixelText(String(hits), 14,-12,10,"#fff");
-    c.add([g,sh,tx]);
-    return c;
-  }
-
-  function drawBook(){
-    const c=s.add.container(0,0);
-    const g=s.add.graphics();
-    g.fillStyle(0x2ecc71,1); g.fillRect(-12,-12,24,24);
-    g.fillStyle(0xffffff,1); g.fillRect(-10,-10,10,20);
-    g.fillStyle(0x0b8f3a,1); g.fillRect(0,-10,10,20);
-    g.lineStyle(2,0x000000,0.30); g.strokeRect(-12,-12,24,24);
-    const t=pixelText("B",0,4,10,"#000"); t.setOrigin(0.5);
-    c.add([g,t]);
-    return c;
-  }
-
-  async function bookFlash(){
-    const r=s.add.rectangle(W/2, TOP.y+TOP.h/2, TOP.w, TOP.h, 0x4be7ff, 0.25).setDepth(400);
-    await wait(90); r.destroy(); await wait(60);
-  }
-
-  function reelSpin(){
-    return new Promise(res=>{
-      const t0=s.time.now;
-      const ev=s.time.addEvent({
-        delay:55, loop:true,
-        callback:()=>{
-          renderTopPanel(makeSpinPanel(false));
-          if(s.time.now-t0>=REEL_SPIN_MS){ ev.remove(false); res(); }
-        }
-      });
-    });
-  }
-
-  // ===== TOWER =====
-  function initTower(){
-    cols=[];
-    for(let c=0;c<TOWER.cols;c++){
-      const h=START_HEIGHTS[c];
-      const arr=[];
-      for(let i=0;i<h;i++){
-        const type = pickStartBlock(i);
-        arr.push({type, hp:type.hp});
-      }
-      cols.push({blocks:arr});
+    g.lineStyle(thickness, color, alpha);
+    const cw = w/cols, ch=h/rows;
+    for(let c=1;c<cols;c++){
+      const xx = x + c*cw;
+      g.beginPath(); g.moveTo(xx, y+2); g.lineTo(xx, y+h-2); g.strokePath();
+    }
+    for(let r=1;r<rows;r++){
+      const yy = y + r*ch;
+      g.beginPath(); g.moveTo(x+2, yy); g.lineTo(x+w-2, yy); g.strokePath();
+    }
+    // обводка ячеек чёрным (как у тебя в шахте)
+    const g2=s.add.graphics();
+    g2.lineStyle(2, 0x000000, 0.38);
+    for(let c=0;c<=cols;c++){
+      const xx = x + c*cw;
+      g2.beginPath(); g2.moveTo(xx, y); g2.lineTo(xx, y+h); g2.strokePath();
+    }
+    for(let r=0;r<=rows;r++){
+      const yy = y + r*ch;
+      g2.beginPath(); g2.moveTo(x, yy); g2.lineTo(x+w, yy); g2.strokePath();
     }
   }
 
-  function pickStartBlock(level){
-    if(level===0 && Math.random()<0.20) return BLOCKS.OBSI;
-    if(Math.random()<0.50) return BLOCKS.GOLD;
-    if(Math.random()<0.35) return BLOCKS.DIAM;
-    return BLOCKS.OBSI;
-  }
-
-  function redrawTower(){
-    blockSprites.forEach(o=>o.destroy());
-    blockSprites=[];
-    for(let c=0;c<TOWER.cols;c++){
-      const stack=cols[c].blocks;
-      for(let i=0;i<stack.length;i++){
-        const b=stack[i];
-        const p=blockToWorld(c,i);
-        blockSprites.push(drawBlock(p.x,p.y,b.type));
-      }
-    }
-  }
-
-  function blockToWorld(col, idx){
-    const x = TOWER.x + col*TOWER.colW;
-    const y = TOWER.baseY - idx*TOWER.cell;
-    return {x,y};
-  }
-
-  function drawBlock(x,y,t){
-    const g=s.add.graphics();
-    g.fillStyle(t.base,1); g.fillRect(x,y,24,24);
-
-    if(t.key==="GOLD"){
-      g.fillStyle(0xffffff,0.18);
-      g.fillRect(x+2,y+2,8,20);
-      g.fillRect(x+12,y+2,6,20);
-    }
-    if(t.key==="OBSI"){
-      g.fillStyle(0x000000,0.18);
-      g.fillRect(x+2,y+2,20,20);
-    }
-    if(t.key==="DIAM"){
-      g.fillStyle(0xffffff,0.14);
-      g.fillRect(x+2,y+6,20,4);
-      g.fillRect(x+2,y+14,20,4);
-    }
-
-    g.fillStyle(t.speck,1);
-    for(let i=0;i<5;i++) g.fillRect(x+rndi(2,20), y+rndi(2,20), 2, 2);
-
-    g.lineStyle(2,0x000000,0.32);
-    g.strokeRect(x,y,24,24);
-    return g;
-  }
-
-  // ===== CHESTS =====
-  function buildChests(){
-    chests=[];
-    for(let i=0;i<CHESTS_TOTAL;i++){
-      const x = CHEST.startX + i*(CHEST.w+CHEST.gap);
-      const obj={x, y:CHEST.y, open:false, g:s.add.graphics(), lock:null};
-      chests.push(obj);
-      drawChest(i,false);
-    }
-  }
-  function resetChests(){ chests.forEach((_,i)=>drawChest(i,false)); }
-  function openChest(i){ drawChest(i,true); }
-
-  function drawChest(i, open){
-    const c=chests[i];
-    c.open=open;
-    c.g.clear();
-
-    c.g.fillStyle(0xc9903a,1); c.g.fillRect(c.x,c.y,CHEST.w,CHEST.h);
-    c.g.fillStyle(0xa86e2c,1); c.g.fillRect(c.x,c.y,CHEST.w,10);
-
-    c.g.fillStyle(0x000000,0.12);
-    c.g.fillRect(c.x+10,c.y,2,CHEST.h);
-    c.g.fillRect(c.x+22,c.y,2,CHEST.h);
-    c.g.fillRect(c.x+34,c.y,2,CHEST.h);
-
-    c.g.lineStyle(2,0x000000,0.30);
-    c.g.strokeRect(c.x,c.y,CHEST.w,CHEST.h);
-
-    if(open){
-      c.g.fillStyle(0x000000,0.10);
-      c.g.fillRect(c.x,c.y-10,CHEST.w,10);
-      c.g.fillStyle(0xffffff,1);
-      c.g.fillRect(c.x+6,c.y-10,6,4);
-      c.g.fillRect(c.x+CHEST.w-12,c.y-10,6,4);
-      if(c.lock) c.lock.setVisible(false);
-    } else {
-      if(!c.lock){
-        c.lock=s.add.text(c.x+CHEST.w/2,c.y+CHEST.h/2+2,"🔒",{fontFamily:"monospace",fontSize:"12px"}).setOrigin(0.5);
-      }
-      c.lock.setVisible(true);
-      c.lock.setPosition(c.x+CHEST.w/2,c.y+CHEST.h/2+2);
-    }
-  }
-
-  function showMul(i, mul){
-    const c=chests[i];
-    const pad=s.add.graphics();
-    pad.fillStyle(0xffffff,0.65);
-    const w=44,h=16;
-    pad.fillRect(c.x+CHEST.w/2-w/2, c.y-22, w, h);
-    pad.lineStyle(2,0x000000,0.20);
-    pad.strokeRect(c.x+CHEST.w/2-w/2, c.y-22, w, h);
-
-    const txt=pixelText(`x${mul}`, c.x+CHEST.w/2, c.y-14, 12, "#0b0b0b");
-    txt.setOrigin(0.5);
-
-    s.tweens.add({targets:[pad,txt], y:'-=10', duration:180, yoyo:true});
-    s.tweens.add({targets:[pad,txt], alpha:0, duration:520, delay:780, onComplete:()=>{pad.destroy();txt.destroy();}});
-    burst(c.x+CHEST.w/2, c.y+8, 0xffd85a);
-  }
-
-  // ===== SLAB / OVERLAY =====
-  function drawSlab(){
-    const g=s.add.graphics();
-    g.fillStyle(0xbdbdbd,1); g.fillRect(SLAB.x,SLAB.y,SLAB.w,SLAB.h);
-    g.lineStyle(2,0x6b6b6b,1); g.strokeRect(SLAB.x,SLAB.y,SLAB.w,SLAB.h);
-    g.fillStyle(0x000000,0.12); g.fillRect(SLAB.x+2, SLAB.y+SLAB.h-4, SLAB.w-4, 4);
-
-    slabText = outlinedText("0.00", W/2, SLAB.y+SLAB.h/2+1, 14);
-    fsText = pixelText("", SLAB.x-48, SLAB.y-10, 10, "rgba(0,0,0,.55)");
-    fsText.setOrigin(0,1);
-  }
-
-  function buildOverlay(){
-    overlayC=s.add.container(0,0).setDepth(500).setVisible(false);
-    const dim=s.add.rectangle(W/2,H/2,W,H,0x000000,0.55);
-    overlayC.add(dim);
-    const t1=outlinedText("BLOCK BONUS", W/2, H/2-46, 18);
-    const t2=outlinedText(`${FREE_SPINS} FREE SPINS`, W/2, H/2-6, 20);
-    overlayC.add([t1,t2]);
-
-    overlayC.show=()=>{ overlayC.setVisible(true); overlayC.setAlpha(0); s.tweens.add({targets:overlayC,alpha:1,duration:160}); };
-    overlayC.hide=()=>{ s.tweens.add({targets:overlayC,alpha:0,duration:160,onComplete:()=>overlayC.setVisible(false)}); };
-  }
-
-  // ===== BACKGROUND =====
-  function drawSky(){
-    s.add.rectangle(W/2,H/2,W,H,0x79d0ff).setDepth(-50);
-    for(let i=0;i<10;i++) cloud(rndi(10,W-70), rndi(20,220), rndi(22,40));
-  }
-  function cloud(x,y,size){
-    const g=s.add.graphics().setDepth(-40);
-    g.fillStyle(0xffffff,1);
-    g.fillRect(x,y,size,size/2);
-    g.fillRect(x+10,y-6,size,size/2);
-    g.fillRect(x+22,y+2,size,size/2);
-    g.fillStyle(0x000000,0.06);
-    g.fillRect(x,y+size/2-2,size+22,3);
-  }
-  function drawGround(){
-    const g=s.add.graphics().setDepth(-30);
-    g.fillStyle(0x5fd23f,1); g.fillRect(0,468,W,14);
-    g.fillStyle(0xb8743c,1); g.fillRect(0,482,W,158);
-    g.fillStyle(0x000000,0.08); g.fillRect(0,468,W,200);
-  }
-
-  // ===== FX / TEXT / UTILS =====
-  function pixelText(str,x,y,size,color){
-    return s.add.text(x,y,String(str),{fontFamily:'"Press Start 2P", monospace',fontSize:`${size}px`,color});
-  }
-  function outlinedText(str,x,y,size){
-    const c=s.add.container(x,y);
-    const t=String(str);
-    const sh=s.add.text(2,2,t,{fontFamily:'"Press Start 2P", monospace',fontSize:`${size}px`,color:"#000"}).setOrigin(0.5);
+  function outlinedText(s, text, x,y, size){
+    const cont = s.add.container(x,y);
+    const sh = s.add.text(2,2,text,{fontFamily:'"Press Start 2P", monospace',fontSize:`${size}px`,color:"#000"}).setOrigin(0.5);
     sh.setAlpha(0.8);
-    const main=s.add.text(0,0,t,{fontFamily:'"Press Start 2P", monospace',fontSize:`${size}px`,color:"#fff"}).setOrigin(0.5);
+    const main = s.add.text(0,0,text,{fontFamily:'"Press Start 2P", monospace',fontSize:`${size}px`,color:"#fff"}).setOrigin(0.5);
     main.setShadow(2,2,"rgba(0,0,0,.55)",0,true,true);
-    c.add([sh,main]);
-    c.setText=(v)=>{ const nv=String(v); sh.setText(nv); main.setText(nv); };
-    return c;
-  }
-  function floatWin(x,y,add){
-    const txt=outlinedText(fmt(add), x, y, 10);
-    txt.setDepth(400);
-    s.tweens.add({targets:txt, y:y-18, alpha:0, duration:700, onComplete:()=>txt.destroy()});
-  }
-  function burst(x,y,color){
-    for(let i=0;i<10;i++){
-      const p=s.add.rectangle(x,y,2,2,color,1).setDepth(300);
-      s.tweens.add({targets:p,x:x+rnd(-24,24),y:y+rnd(-24,24),alpha:{from:1,to:0},duration:260,onComplete:()=>p.destroy()});
-    }
+    cont.add([sh,main]);
+
+    cont.setText = (t)=>{ sh.setText(String(t)); main.setText(String(t)); };
+    return cont;
   }
 
-  function setTotal(v){ total=Math.max(0,v); }
-  function fmt(v){ return Math.max(0,v).toFixed(DECIMALS); }
-  function makeNice(v){
-    let x=Math.max(0,v);
-    const step = x<10?0.1:x<100?0.5:x<1000?1:x<10000?5:10;
-    x=Math.ceil(x/step)*step;
-    return Number(x.toFixed(DECIMALS));
-  }
-
-  function wait(ms){ return new Promise(r=>s.time.delayedCall(ms,r)); }
-  function rnd(a,b){ return a + Math.random()*(b-a); }
-  function rndi(a,b){ return Math.floor(rnd(a,b)); }
-  function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
-
-  function pickW(values, weights){
-    const sum=weights.reduce((a,b)=>a+b,0);
-    let r=Math.random()*sum;
-    for(let i=0;i<values.length;i++){ r-=weights[i]; if(r<=0) return values[i]; }
-    return values[values.length-1];
-  }
-
+  function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
+  function rndi(a,b){ return Math.floor(a + Math.random()*(b-a)); }
 })();
 </script>
 </body>
