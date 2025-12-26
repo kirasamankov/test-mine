@@ -9,135 +9,168 @@
 <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
 
 <style>
-html,body{margin:0;height:100%;background:#79d0ff}
+html,body{margin:0;height:100%;background:#79d0ff;overflow:hidden}
+body{display:flex;align-items:center;justify-content:center}
 canvas{
   image-rendering:pixelated;
   image-rendering:crisp-edges;
   display:block;
-  margin:auto;
   border-radius:18px;
 }
 </style>
 </head>
-
 <body>
 
 <script>
-const W=360, H=640;
-const COLS=5;
-const CELL=48;
+(() => {
+  const W=360, H=640;
 
-const TOP_ROWS=3;
-const MINE_ROWS=6;
+  const COLS=5;
+  const CELL=48;
+  const TOP_ROWS=3;
+  const MINE_ROWS=6;
 
-const X0=(W-COLS*CELL)/2;
-const TOP_Y=20;
-const MINE_Y=TOP_Y+TOP_ROWS*CELL;
-const CHEST_Y=MINE_Y+MINE_ROWS*CELL;
-const SLAB_Y=CHEST_Y+52;
+  const GRID_W = COLS*CELL;
+  const X0 = Math.floor((W - GRID_W)/2);
 
-new Phaser.Game({
-  type:Phaser.CANVAS,
-  width:W,
-  height:H,
-  backgroundColor:"#79d0ff",
-  pixelArt:true,
-  scene:{preload,create}
-});
+  const TOP_Y = 20;
+  const MINE_Y = TOP_Y + TOP_ROWS*CELL;
+  const CHEST_Y = MINE_Y + MINE_ROWS*CELL + 8;
+  const SLAB_Y = CHEST_Y + 44 + 10;
 
-function preload(){
-  this.load.image("pick_wood","assets/pick_wood.png");
-  this.load.image("pick_iron","assets/pick_iron.png");
-  this.load.image("pick_gold","assets/pick_gold.png");
-  this.load.image("pick_diamond","assets/pick_diamond.png");
-  this.load.image("eye","assets/eye.png");
-  this.load.image("book","assets/book.png");
-  this.load.image("tnt","assets/tnt.png");
+  const ASSETS = {
+    pick_wood:   "assets/pick_wood.png",
+    pick_iron:   "assets/pick_iron.png",
+    pick_gold:   "assets/pick_gold.png",
+    pick_diamond:"assets/pick_diamond.png",
+    eye:         "assets/eye.png",
+    book:        "assets/book.png",
+    tnt:         "assets/tnt.png",
 
-  this.load.image("grass","assets/tile_grass.png");
-  this.load.image("dirt","assets/tile_dirt.png");
-  this.load.image("iron","assets/tile_iron.png");
+    grass: "assets/tile_grass.png",
+    dirt:  "assets/tile_dirt.png",
+    iron:  "assets/tile_iron.png",
 
-  this.load.image("chest","assets/chest_closed.png");
-  this.load.image("slab","assets/slab.png");
-}
+    chest_closed: "assets/chest_closed.png",
+    chest_open:   "assets/chest_open.png",
+    chest_bonus:  "assets/chest_bonus.png",
+  };
 
-function create(){
-  drawTopPanel(this);
-  drawMine(this);
-  drawChests(this);
-  drawSlab(this);
-  fillTopWithItems(this);
-}
+  new Phaser.Game({
+    type: Phaser.CANVAS,
+    width: W,
+    height: H,
+    backgroundColor: "#79d0ff",
+    pixelArt: true,
+    scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+    scene: { preload, create }
+  });
 
-function drawTopPanel(s){
-  drawGrid(s,X0,TOP_Y,COLS,TOP_ROWS,0xbfc3c7);
-}
-function drawMine(s){
-  for(let r=0;r<MINE_ROWS;r++){
-    for(let c=0;c<COLS;c++){
-      let tex="dirt";
-      if(r===0) tex="grass";
-      if(r===2) tex="iron";
-      const img=s.add.image(
-        X0+c*CELL+CELL/2,
-        MINE_Y+r*CELL+CELL/2,
-        tex
-      );
-      img.setScale(CELL/img.width);
+  function preload(){
+    for(const k in ASSETS){
+      this.load.image(k, ASSETS[k]);
     }
   }
-  drawGrid(s,X0,MINE_Y,COLS,MINE_ROWS,null,true);
-}
-function drawChests(s){
-  for(let c=0;c<COLS;c++){
-    const img=s.add.image(
-      X0+c*CELL+CELL/2,
-      CHEST_Y+22,
-      "chest"
-    );
-    img.setScale(44/img.width);
-  }
-}
-function drawSlab(s){
-  const img=s.add.image(W/2,SLAB_Y+14,"slab");
-  img.setScale(188/img.width);
-  s.add.text(W/2,SLAB_Y+16,"0.00",{
-    fontFamily:"Press Start 2P",
-    fontSize:"14px",
-    color:"#fff"
-  }).setOrigin(0.5);
-}
 
-function drawGrid(s,x,y,cols,rows,fill,black){
-  const g=s.add.graphics();
-  if(fill!==null){
-    g.fillStyle(fill,1);
-    g.fillRect(x,y,cols*CELL,rows*CELL);
-  }
-  g.lineStyle(2,black?0x000000:0xffffff,black?0.35:0.9);
-  for(let c=0;c<=cols;c++){
-    g.lineBetween(x+c*CELL,y,x+c*CELL,y+rows*CELL);
-  }
-  for(let r=0;r<=rows;r++){
-    g.lineBetween(x,y+r*CELL,x+cols*CELL,y+r*CELL);
-  }
-}
+  function create(){
+    const s=this;
 
-function fillTopWithItems(s){
-  const items=["pick_wood","pick_iron","pick_gold","pick_diamond","eye","book","tnt"];
-  for(let i=0;i<15;i++){
-    const key=items[Math.floor(Math.random()*items.length)];
-    const c=i%COLS;
-    const r=Math.floor(i/COLS);
-    const img=s.add.image(
-      X0+c*CELL+CELL/2,
-      TOP_Y+r*CELL+CELL/2,
-      key
-    );
-    img.setScale((CELL-8)/img.width);
+    // фон
+    s.add.rectangle(W/2,H/2,W,H,0x79d0ff);
+
+    // верхняя панель 5x3
+    drawPanel(s, X0, TOP_Y, COLS, TOP_ROWS);
+    fillTop(s);
+
+    // шахта 5x6
+    drawMine(s);
+
+    // сундуки (5)
+    drawChests(s);
+
+    // плашка счёта
+    drawSlab(s, "0.00");
   }
-}
+
+  function drawPanel(s,x,y,c,r){
+    const g=s.add.graphics();
+    g.fillStyle(0xbfc3c7,1).fillRect(x,y,c*CELL,r*CELL);
+    g.lineStyle(3,0x6b6b6b,1).strokeRect(x,y,c*CELL,r*CELL);
+    g.lineStyle(2,0xffffff,0.9);
+    for(let i=1;i<c;i++) g.lineBetween(x+i*CELL,y,x+i*CELL,y+r*CELL);
+    for(let i=1;i<r;i++) g.lineBetween(x,y+i*CELL,x+c*CELL,y+i*CELL);
+  }
+
+  function fillTop(s){
+    const items=[
+      "pick_wood","pick_iron","pick_gold","pick_diamond",
+      "eye","book","tnt"
+    ];
+    for(let i=0;i<COLS*TOP_ROWS;i++){
+      const key=items[Math.floor(Math.random()*items.length)];
+      const cx=X0+(i%COLS)*CELL+CELL/2;
+      const cy=TOP_Y+Math.floor(i/COLS)*CELL+CELL/2;
+      const img=s.add.image(cx,cy,key);
+      img.setScale((CELL-8)/img.width);
+
+      const hits={
+        pick_wood:1,pick_iron:2,pick_gold:3,pick_diamond:5
+      }[key];
+
+      if(hits){
+        s.add.text(cx+CELL/2-10,cy-CELL/2+6,String(hits),{
+          fontFamily:"Press Start 2P",
+          fontSize:"12px",
+          color:"#fff"
+        }).setOrigin(1,0).setShadow(2,2,"rgba(0,0,0,.6)",0,true,true);
+      }
+    }
+  }
+
+  function drawMine(s){
+    for(let r=0;r<MINE_ROWS;r++){
+      for(let c=0;c<COLS;c++){
+        let k="dirt";
+        if(r===0) k="grass";
+        if(r===2) k="iron";
+        const img=s.add.image(
+          X0+c*CELL+CELL/2,
+          MINE_Y+r*CELL+CELL/2,
+          k
+        );
+        img.setScale(CELL/img.width);
+      }
+    }
+    const g=s.add.graphics();
+    g.lineStyle(2,0x000000,0.35);
+    for(let i=0;i<=COLS;i++)
+      g.lineBetween(X0+i*CELL,MINE_Y,X0+i*CELL,MINE_Y+MINE_ROWS*CELL);
+    for(let i=0;i<=MINE_ROWS;i++)
+      g.lineBetween(X0,MINE_Y+i*CELL,X0+COLS*CELL,MINE_Y+i*CELL);
+  }
+
+  function drawChests(s){
+    for(let c=0;c<COLS;c++){
+      const img=s.add.image(
+        X0+c*CELL+CELL/2,
+        CHEST_Y+22,
+        "chest_closed"
+      );
+      img.setScale(44/img.width);
+    }
+  }
+
+  function drawSlab(s,val){
+    const g=s.add.graphics();
+    g.fillStyle(0xbdbdbd,1).fillRect((W-188)/2,SLAB_Y,188,28);
+    g.lineStyle(2,0x6b6b6b,1).strokeRect((W-188)/2,SLAB_Y,188,28);
+    s.add.text(W/2,SLAB_Y+15,val,{
+      fontFamily:"Press Start 2P",
+      fontSize:"14px",
+      color:"#fff"
+    }).setOrigin(0.5).setShadow(2,2,"rgba(0,0,0,.55)",0,true,true);
+  }
+})();
 </script>
 </body>
 </html>
