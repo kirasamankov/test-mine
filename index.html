@@ -2,62 +2,125 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Block Bonus</title>
 
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
 
 <style>
-html,body{margin:0;height:100%;background:#79d0ff;overflow:hidden}
-body{display:flex;align-items:center;justify-content:center}
-canvas{
-  image-rendering:pixelated;
-  image-rendering:crisp-edges;
-  display:block;
-  border-radius:18px;
-}
+  html,body{margin:0;height:100%;background:#79d0ff;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center}
+  #wrap{display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px;box-sizing:border-box}
+  canvas{image-rendering:pixelated;image-rendering:crisp-edges;display:block;border-radius:18px}
+
+  /* Кнопки ВНЕ КАДРА */
+  #hud{
+    width:min(540px,96vw);
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:10px;
+    padding:10px 12px;
+    border-radius:14px;
+    background:rgba(0,0,0,.55);
+    color:#fff;
+    font-family:"Press Start 2P", monospace;
+    font-size:10px;
+    user-select:none;
+    box-sizing:border-box;
+  }
+  #hud.hidden{display:none}
+  .grp{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  button{
+    font-family:"Press Start 2P", monospace;
+    font-size:10px;
+    padding:8px 10px;
+    border-radius:10px;
+    border:0;
+    cursor:pointer;
+    background:#e9e9e9;
+    color:#111;
+  }
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button:active{transform:translateY(1px)}
+  .tiny{opacity:.85;font-size:8px}
 </style>
 </head>
+
 <body>
+<div id="wrap">
+  <div id="game"></div>
+
+  <div id="hud">
+    <div class="grp">
+      <button id="btnStart">START</button>
+      <button id="btnBonus" disabled>BONUS</button>
+      <button id="btnRec">REC</button>
+      <span class="tiny">Space/Enter=Start • B=Bonus • R=REC</span>
+    </div>
+  </div>
+</div>
 
 <script>
 (() => {
   const W=360, H=640;
 
-  const COLS=5;
-  const CELL=48;
-  const TOP_ROWS=3;
-  const MINE_ROWS=6;
+  // СТРОГОЕ ТЗ: 5 в ширину везде
+  const COLS=5, CELL=48;
+  const TOP_ROWS=3, MINE_ROWS=6;
 
   const GRID_W = COLS*CELL;
   const X0 = Math.floor((W - GRID_W)/2);
 
   const TOP_Y = 20;
-  const MINE_Y = TOP_Y + TOP_ROWS*CELL;
-  const CHEST_Y = MINE_Y + MINE_ROWS*CELL + 8;
-  const SLAB_Y = CHEST_Y + 44 + 10;
+  const MINE_Y = TOP_Y + TOP_ROWS*CELL;         // сразу под верхней рамкой
+  const CHEST_Y = MINE_Y + MINE_ROWS*CELL + 8;  // сразу под шахтой
+  const SLAB_Y  = CHEST_Y + 44 + 10;            // сразу под сундуками
 
+  // Бонус
+  const EYES_TO_BONUS = 3;
+  const FREE_SPINS = 4;
+  const REEL_MS = 650;
+
+  // Пути ТВОИХ файлов (по твоему скрину)
   const ASSETS = {
-    pick_wood:   "assets/pick_wood.png",
-    pick_iron:   "assets/pick_iron.png",
-    pick_gold:   "assets/pick_gold.png",
-    pick_diamond:"assets/pick_diamond.png",
-    eye:         "assets/eye.png",
-    book:        "assets/book.png",
-    tnt:         "assets/tnt.png",
+    pick_wood:    "assets/pick_wood.png",
+    pick_iron:    "assets/pick_iron.png",
+    pick_gold:    "assets/pick_gold.png",
+    pick_diamond: "assets/pick_diamond.png",
+    eye:          "assets/eye.png",
+    book:         "assets/book.png",
+    tnt:          "assets/tnt.png",
 
     grass: "assets/tile_grass.png",
     dirt:  "assets/tile_dirt.png",
     iron:  "assets/tile_iron.png",
 
-    chest_closed: "assets/chest_closed.png",
-    chest_open:   "assets/chest_open.png",
-    chest_bonus:  "assets/chest_bonus.png",
+    chest_closed:"assets/chest_closed.png",
+    chest_open:  "assets/chest_open.png",
+    chest_bonus: "assets/chest_bonus.png",
   };
 
-  new Phaser.Game({
+  // UI
+  const btnStart = document.getElementById("btnStart");
+  const btnBonus = document.getElementById("btnBonus");
+  const btnRec   = document.getElementById("btnRec");
+  const hudEl    = document.getElementById("hud");
+
+  // State
+  let running = false;
+  let bonusReady = false;
+  let total = 0;
+
+  // Panel items (15 cells)
+  let panel = new Array(COLS*TOP_ROWS).fill(null);
+
+  const PICK_HITS = { pick_wood:1, pick_iron:2, pick_gold:3, pick_diamond:5 };
+
+  const game = new Phaser.Game({
     type: Phaser.CANVAS,
+    parent: "game",
     width: W,
     height: H,
     backgroundColor: "#79d0ff",
@@ -67,9 +130,7 @@ canvas{
   });
 
   function preload(){
-    for(const k in ASSETS){
-      this.load.image(k, ASSETS[k]);
-    }
+    for(const k in ASSETS) this.load.image(k, ASSETS[k]);
   }
 
   function create(){
@@ -78,98 +139,203 @@ canvas{
     // фон
     s.add.rectangle(W/2,H/2,W,H,0x79d0ff);
 
-    // верхняя панель 5x3
-    drawPanel(s, X0, TOP_Y, COLS, TOP_ROWS);
-    fillTop(s);
+    // 1) Верхняя рамка 5x3
+    drawTopFrame(s);
 
-    // шахта 5x6
+    // 2) Шахта 5x6
     drawMine(s);
 
-    // сундуки (5)
+    // 3) Сундуки 5
     drawChests(s);
 
-    // плашка счёта
-    drawSlab(s, "0.00");
-  }
+    // 4) Плашка счёта (кодом)
+    const slab = drawSlab(s);
 
-  function drawPanel(s,x,y,c,r){
-    const g=s.add.graphics();
-    g.fillStyle(0xbfc3c7,1).fillRect(x,y,c*CELL,r*CELL);
-    g.lineStyle(3,0x6b6b6b,1).strokeRect(x,y,c*CELL,r*CELL);
-    g.lineStyle(2,0xffffff,0.9);
-    for(let i=1;i<c;i++) g.lineBetween(x+i*CELL,y,x+i*CELL,y+r*CELL);
-    for(let i=1;i<r;i++) g.lineBetween(x,y+i*CELL,x+c*CELL,y+i*CELL);
-  }
+    // Контейнеры предметов верхней панели
+    const cellContainers = buildTopCellContainers(s);
 
-  function fillTop(s){
-    const items=[
-      "pick_wood","pick_iron","pick_gold","pick_diamond",
-      "eye","book","tnt"
-    ];
-    for(let i=0;i<COLS*TOP_ROWS;i++){
-      const key=items[Math.floor(Math.random()*items.length)];
-      const cx=X0+(i%COLS)*CELL+CELL/2;
-      const cy=TOP_Y+Math.floor(i/COLS)*CELL+CELL/2;
-      const img=s.add.image(cx,cy,key);
-      img.setScale((CELL-8)/img.width);
+    // Рендер панели
+    function renderPanel(){
+      for(const cc of cellContainers) cc.removeAll(true);
 
-      const hits={
-        pick_wood:1,pick_iron:2,pick_gold:3,pick_diamond:5
-      }[key];
+      for(let i=0;i<panel.length;i++){
+        const it = panel[i];
+        if(!it) continue;
+        const cont = cellContainers[i];
 
-      if(hits){
-        s.add.text(cx+CELL/2-10,cy-CELL/2+6,String(hits),{
-          fontFamily:"Press Start 2P",
-          fontSize:"12px",
-          color:"#fff"
-        }).setOrigin(1,0).setShadow(2,2,"rgba(0,0,0,.6)",0,true,true);
+        const img = s.add.image(0,0,it);
+        img.setScale((CELL-8)/img.width, (CELL-8)/img.height);
+        cont.add(img);
+
+        // цифры на кирках поверх (как раньше)
+        const hits = PICK_HITS[it] || 0;
+        if(hits){
+          const t = s.add.text(CELL/2-10, -CELL/2+6, String(hits), {
+            fontFamily:"Press Start 2P",
+            fontSize:"12px",
+            color:"#fff"
+          }).setOrigin(1,0);
+          t.setShadow(2,2,"rgba(0,0,0,.6)",0,true,true);
+          cont.add(t);
+        }
+      }
+
+      // бонус готов?
+      const eyes = panel.filter(x=>x==="eye").length;
+      bonusReady = eyes >= EYES_TO_BONUS;
+      btnBonus.disabled = !bonusReady;
+    }
+
+    // Генерация панели (крутилка)
+    function randomPanel(){
+      const items = ["pick_wood","pick_iron","pick_gold","pick_diamond","eye","book","tnt", null];
+      const out = new Array(COLS*TOP_ROWS).fill(null);
+
+      for(let i=0;i<out.length;i++){
+        // чуть больше кирок, чуть меньше спец. предметов
+        const r = Math.random();
+        if(r < 0.18) out[i]=null;
+        else if(r < 0.68) out[i]=["pick_wood","pick_iron","pick_gold","pick_diamond"][randInt(0,3)];
+        else if(r < 0.78) out[i]="eye";
+        else if(r < 0.90) out[i]="book";
+        else out[i]="tnt";
+      }
+      return out;
+    }
+
+    async function spinOnce(){
+      // имитация вращения
+      const start = s.time.now;
+      while(s.time.now - start < REEL_MS){
+        panel = randomPanel();
+        renderPanel();
+        await wait(s, 55);
+      }
+      // финал
+      panel = randomPanel();
+      renderPanel();
+
+      // “красивая сумма”
+      const hitsSum = panel.reduce((acc,it)=>acc + (PICK_HITS[it]||0), 0);
+      total += (hitsSum * 0.37);
+      slab.setText(total.toFixed(2));
+    }
+
+    async function runBonus(){
+      // 4 бесплатных спина
+      for(let i=0;i<FREE_SPINS;i++){
+        await spinOnce();
+        await wait(s, 180);
       }
     }
+
+    async function onStart(){
+      if(running) return;
+      running=true;
+      await spinOnce();
+      running=false;
+    }
+
+    async function onBonus(){
+      if(running) return;
+      if(!bonusReady) return;
+      running=true;
+      await runBonus();
+      bonusReady=false;
+      btnBonus.disabled = true;
+      running=false;
+    }
+
+    // кнопки
+    btnStart.onclick = () => onStart();
+    btnBonus.onclick = () => onBonus();
+    btnRec.onclick = () => { hudEl.classList.toggle("hidden"); };
+
+    // клавиши
+    s.input.keyboard.on("keydown-SPACE", ()=>onStart());
+    s.input.keyboard.on("keydown-ENTER", ()=>onStart());
+    s.input.keyboard.on("keydown-B", ()=>onBonus());
+    s.input.keyboard.on("keydown-R", ()=>hudEl.classList.toggle("hidden"));
+
+    // начальная панель
+    panel = randomPanel();
+    renderPanel();
+  }
+
+  // ====== рисование UI ======
+
+  function drawTopFrame(s){
+    const g=s.add.graphics();
+    // серый фон
+    g.fillStyle(0xbfc3c7,1).fillRect(X0,TOP_Y,COLS*CELL,TOP_ROWS*CELL);
+    // рамка
+    g.lineStyle(3,0x6b6b6b,1).strokeRect(X0,TOP_Y,COLS*CELL,TOP_ROWS*CELL);
+    // сетка белая (всегда видна)
+    g.lineStyle(2,0xffffff,0.9);
+    for(let c=1;c<COLS;c++) g.lineBetween(X0+c*CELL,TOP_Y,X0+c*CELL,TOP_Y+TOP_ROWS*CELL);
+    for(let r=1;r<TOP_ROWS;r++) g.lineBetween(X0,TOP_Y+r*CELL,X0+COLS*CELL,TOP_Y+r*CELL);
+  }
+
+  function buildTopCellContainers(s){
+    const arr=[];
+    for(let r=0;r<TOP_ROWS;r++){
+      for(let c=0;c<COLS;c++){
+        const cx = X0 + c*CELL + CELL/2;
+        const cy = TOP_Y + r*CELL + CELL/2;
+        arr.push(s.add.container(cx,cy));
+      }
+    }
+    return arr;
   }
 
   function drawMine(s){
     for(let r=0;r<MINE_ROWS;r++){
       for(let c=0;c<COLS;c++){
+        const cx = X0 + c*CELL + CELL/2;
+        const cy = MINE_Y + r*CELL + CELL/2;
+
         let k="dirt";
         if(r===0) k="grass";
-        if(r===2) k="iron";
-        const img=s.add.image(
-          X0+c*CELL+CELL/2,
-          MINE_Y+r*CELL+CELL/2,
-          k
-        );
-        img.setScale(CELL/img.width);
+        if(r===2) k="iron"; // пока так, позже заменим на твои точные слои
+
+        const img=s.add.image(cx,cy,k);
+        img.setScale(CELL/img.width, CELL/img.height);
       }
     }
+    // сетка чёрная
     const g=s.add.graphics();
     g.lineStyle(2,0x000000,0.35);
-    for(let i=0;i<=COLS;i++)
-      g.lineBetween(X0+i*CELL,MINE_Y,X0+i*CELL,MINE_Y+MINE_ROWS*CELL);
-    for(let i=0;i<=MINE_ROWS;i++)
-      g.lineBetween(X0,MINE_Y+i*CELL,X0+COLS*CELL,MINE_Y+i*CELL);
+    for(let c=0;c<=COLS;c++) g.lineBetween(X0+c*CELL,MINE_Y,X0+c*CELL,MINE_Y+MINE_ROWS*CELL);
+    for(let r=0;r<=MINE_ROWS;r++) g.lineBetween(X0,MINE_Y+r*CELL,X0+COLS*CELL,MINE_Y+r*CELL);
   }
 
   function drawChests(s){
     for(let c=0;c<COLS;c++){
-      const img=s.add.image(
-        X0+c*CELL+CELL/2,
-        CHEST_Y+22,
-        "chest_closed"
-      );
-      img.setScale(44/img.width);
+      const img=s.add.image(X0+c*CELL+CELL/2, CHEST_Y+22, "chest_closed");
+      img.setScale(44/img.width, 44/img.height);
     }
   }
 
-  function drawSlab(s,val){
+  function drawSlab(s){
+    const SLAB_W=188, SLAB_H=28;
+    const x=Math.floor((W-SLAB_W)/2), y=SLAB_Y;
     const g=s.add.graphics();
-    g.fillStyle(0xbdbdbd,1).fillRect((W-188)/2,SLAB_Y,188,28);
-    g.lineStyle(2,0x6b6b6b,1).strokeRect((W-188)/2,SLAB_Y,188,28);
-    s.add.text(W/2,SLAB_Y+15,val,{
+    g.fillStyle(0xbdbdbd,1).fillRect(x,y,SLAB_W,SLAB_H);
+    g.lineStyle(2,0x6b6b6b,1).strokeRect(x,y,SLAB_W,SLAB_H);
+    g.fillStyle(0x000000,0.12).fillRect(x+2,y+SLAB_H-4,SLAB_W-4,4);
+
+    const t = s.add.text(W/2, y+SLAB_H/2+1, "0.00", {
       fontFamily:"Press Start 2P",
       fontSize:"14px",
       color:"#fff"
     }).setOrigin(0.5).setShadow(2,2,"rgba(0,0,0,.55)",0,true,true);
+
+    return { setText:(v)=>t.setText(String(v)) };
   }
+
+  // helpers
+  function randInt(a,b){ return Math.floor(a + Math.random()*(b-a+1)); }
+  function wait(s,ms){ return new Promise(res=>s.time.delayedCall(ms,res)); }
 })();
 </script>
 </body>
